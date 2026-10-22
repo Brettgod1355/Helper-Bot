@@ -1,0 +1,28 @@
+# Copy to .github/workflows/pr-audit.yml in a plugin repository.
+name: PR audit
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: pr-audit-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    # Skip drafts, and PRs from forks (they get no secrets, and their code should not reach a paid API).
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: Brettgod1355/Helper-Bot/.github/workflows/pr-audit.yml@main
+    with:
+      run_hub_compliance: true
+      run_deep_stress_test: true
+      dry_run: true   # false = post the scorecard as one PR comment, updated on every push
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write

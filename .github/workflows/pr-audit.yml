@@ -1,0 +1,151 @@
+name: PR audit
+
+# Reusable: a plugin repository calls this from its own workflow on pull_request.
+# See README.md for the caller.
+on:
+  workflow_call:
+    inputs:
+      run_hub_compliance:
+        description: Check the PR for Plugin Hub rejection causes
+        type: boolean
+        default: true
+      run_deep_stress_test:
+        description: Adversarial OSRS engine audit of the whole src/main/java (extended thinking)
+        type: boolean
+        default: true
+      dry_run:
+        description: Print the scorecard to the log instead of commenting on the PR
+        type: boolean
+        default: true
+      pr_number:
+        description: PR to audit when the caller is not a pull_request event (0 = the event's PR)
+        type: number
+        default: 0
+      model:
+        description: Claude model
+        type: string
+        default: claude-opus-5-5
+      helper_bot_ref:
+        description: Branch, tag or SHA of Helper-Bot to run the scripts from
+        type: string
+        default: main
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  PR_NUMBER: ${{ inputs.pr_number != 0 && inputs.pr_number || github.event.pull_request.number }}
+  BASE_SHA: ${{ inputs.pr_number == 0 && github.event.pull_request.base.sha || '' }}
+  HEAD_SHA: ${{ inputs.pr_number == 0 && github.event.pull_request.head.sha || '' }}
+  CLAUDE_MODEL: ${{ inputs.model }}
+  DRY_RUN: ${{ inputs.dry_run }}
+  OUT_DIR: audit-out
+
+jobs:
+  hub-compliance:
+    name: Hub compliance
+    if: inputs.run_hub_compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check out Helper-Bot
+        uses: actions/checkout@v4
+        with:
+          repository: Brettgod1355/Helper-Bot
+          ref: ${{ inputs.helper_bot_ref }}
+          path: .helper-bot
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .helper-bot/requirements.txt
+      - run: pip install -r .helper-bot/requirements.txt
+      - name: Audit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .helper-bot/.github/scripts/pr_audit.py compliance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-audit-compliance
+          path: audit-out/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  deep-stress-test:
+    name: Deep stress test
+    if: inputs.run_deep_stress_test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check out Helper-Bot
+        uses: actions/checkout@v4
+        with:
+          repository: Brettgod1355/Helper-Bot
+          ref: ${{ inputs.helper_bot_ref }}
+          path: .helper-bot
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .helper-bot/requirements.txt
+      - run: pip install -r .helper-bot/requirements.txt
+      - name: Audit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .helper-bot/.github/scripts/pr_audit.py stress
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-audit-stress
+          path: audit-out/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  report:
+    name: Scorecard
+    needs: [hub-compliance, deep-stress-test]
+    if: always() && (inputs.run_hub_compliance || inputs.run_deep_stress_test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check out Helper-Bot
+        uses: actions/checkout@v4
+        with:
+          repository: Brettgod1355/Helper-Bot
+          ref: ${{ inputs.helper_bot_ref }}
+          path: .helper-bot
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .helper-bot/requirements.txt
+      - run: pip install -r .helper-bot/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pr-audit-*
+          path: audit-out
+      - name: Print or post the scorecard
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .helper-bot/.github/scripts/pr_audit.py report

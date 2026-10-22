@@ -1,0 +1,93 @@
+name: Issue triage
+
+# Reusable: a plugin repository calls this on issues: opened (triage), issue_comment: created
+# (the author's follow-up) and an hourly schedule (the author's 👍 / 👎). See README.md for the caller.
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: Issue to triage (0 = the event's issue; on a schedule, 0 checks reactions)
+        type: number
+        default: 0
+      dry_run:
+        description: Print replies and label changes instead of making them
+        type: boolean
+        default: true
+      maintainer:
+        description: How the bot names you in its replies, e.g. your GitHub name
+        type: string
+        default: ""
+      bug_tip:
+        description: Optional Markdown added to replies the bot labels as a bug (e.g. a tool that helps players report bugs)
+        type: string
+        default: ""
+      max_issues_per_day:
+        description: New issues the bot answers in any 24 hours; more wait for you (0 = no limit)
+        type: number
+        default: 10
+      app_client_id:
+        description: Client ID of your own GitHub App, so the bot posts as that app instead of github-actions[bot]
+        type: string
+        default: ""
+      model:
+        description: Claude model
+        type: string
+        default: claude-opus-5-5
+      helper_bot_ref:
+        description: Branch, tag or SHA of Helper-Bot to run the scripts from
+        type: string
+        default: main
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      BOT_APP_PRIVATE_KEY:
+        description: The GitHub App's private key (with app_client_id)
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  triage:
+    name: Triage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Bot identity (GitHub App)
+        id: app-token
+        if: inputs.app_client_id != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.app_client_id }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+      - name: Check out the plugin
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out Helper-Bot
+        uses: actions/checkout@v4
+        with:
+          repository: Brettgod1355/Helper-Bot
+          ref: ${{ inputs.helper_bot_ref }}
+          path: .helper-bot
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .helper-bot/requirements.txt
+      - run: pip install -r .helper-bot/requirements.txt
+      - name: Triage
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number != 0 && inputs.issue_number || github.event.issue.number }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          MAINTAINER: ${{ inputs.maintainer }}
+          BUG_TIP: ${{ inputs.bug_tip }}
+          MAX_ISSUES_PER_DAY: ${{ inputs.max_issues_per_day }}
+          CLAUDE_MODEL: ${{ inputs.model }}
+        run: python .helper-bot/.github/scripts/issue_triage.py

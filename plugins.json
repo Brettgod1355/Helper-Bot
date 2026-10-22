@@ -1,0 +1,11 @@
+[
+  {
+    "hub_name": "afk-shipwrecks",
+    "repo": "Brettgod1355/AFK-Shipwrecks",
+    "display_name": "AFK Shipwrecks",
+    "discord": {
+      "role_id": "1556025709875564674",
+      "closing_line": "No networking, no new dependencies. Found a bug? Post it in <#1550413652551798854>. Have an idea? Drop it in <#1550413656452243466>. You can also use the Feedback tab in the plugin. 🚢"
+    }
+  }
+]

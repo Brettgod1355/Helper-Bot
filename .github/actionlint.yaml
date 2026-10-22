@@ -1,0 +1,7 @@
+# actionlint's bundled list of action inputs still has create-github-app-token's old required `app-id`.
+# v3's own action.yml takes `client-id` (and marks `app-id` deprecated), so these two messages are stale.
+paths:
+  .github/workflows/issue-triage.yml:
+    ignore:
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'

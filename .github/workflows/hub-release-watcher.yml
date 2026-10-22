@@ -1,0 +1,50 @@
+name: Hub release watcher
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print the notes and post nothing
+        type: boolean
+        default: true
+      plugin:
+        description: Only this hub_name from plugins.json (empty = all)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-release-watcher
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Check the Plugin Hub
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Manual runs follow the dry_run box. Scheduled runs stay dry, and spend no Claude tokens,
+          # until the repository variable HUB_WATCHER_LIVE is set to true.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || github.event_name != 'workflow_dispatch' && vars.HUB_WATCHER_LIVE != 'true' }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          ONLY_PLUGIN: ${{ inputs.plugin }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || 'claude-opus-5-5' }}
+          RELEASE_TAGGER_NAME: ${{ vars.RELEASE_TAGGER_NAME }}
+          RELEASE_TAGGER_EMAIL: ${{ vars.RELEASE_TAGGER_EMAIL }}
+        run: python .github/scripts/hub_release.py
