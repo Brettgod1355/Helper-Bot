@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".github" / "scripts"))
 
+import auth_check  # noqa: E402
 import common  # noqa: E402
 import hub_release  # noqa: E402
 import issue_triage  # noqa: E402
@@ -693,3 +694,38 @@ def test_federation_exchanges_a_fresh_github_token_then_calls_claude_with_it(mon
     assert exchange["federation_rule_id"] == "fdrl_test" and exchange["service_account_id"] == "svac_test"
     assert exchange["organization_id"] == FEDERATION["organization_id"] and exchange["workspace_id"] == "wrkspc_test"
     assert seen["authorization"] == "Bearer sk-ant-oat01-test" and not seen["x-api-key"]
+
+
+def test_auth_check_refuses_anything_but_federation(monkeypatch):
+    with pytest.raises(SystemExit, match="auth=None"):
+        auth_check.check()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    with pytest.raises(SystemExit, match="auth=api_key"):
+        auth_check.check()
+
+
+def test_auth_check_lists_models_with_the_federated_token(monkeypatch, tmp_path):
+    import anthropic
+    import httpx2 as httpx
+
+    _federate(monkeypatch, tmp_path)
+    monkeypatch.setattr(common, "github_identity_token", lambda: "jwt-1")
+    seen = {}
+
+    def handler(request):
+        if request.url.path == "/v1/oauth/token":
+            return httpx.Response(200, json={"access_token": "sk-ant-oat01-test", "token_type": "Bearer",
+                                             "expires_in": 600, "scope": "workspace:developer"})
+        seen.update(path=request.url.path, method=request.method, authorization=request.headers.get("authorization"))
+        return httpx.Response(200, json={"data": [{"type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5",
+                                                   "created_at": "2026-01-01T00:00:00Z"}],
+                                         "has_more": False, "first_id": "claude-opus-5-5", "last_id": "claude-opus-5-5"})
+
+    transport = httpx.MockTransport(handler)
+    real_client, real_credentials = anthropic.Anthropic, anthropic.WorkloadIdentityCredentials
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: real_client(http_client=httpx.Client(transport=transport), **kw))
+    monkeypatch.setattr(anthropic, "WorkloadIdentityCredentials",
+                        lambda **kw: real_credentials(http_client=httpx.Client(transport=transport), **kw))
+
+    assert auth_check.check() == ["claude-opus-5-5"]
+    assert seen == {"path": "/v1/models", "method": "GET", "authorization": "Bearer sk-ant-oat01-test"}

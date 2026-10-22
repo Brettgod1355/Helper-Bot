@@ -12,6 +12,7 @@ Everything starts in **dry run**: it prints what it would post and changes nothi
 | Issue triage | `.github/workflows/issue-triage.yml` (reusable) | when a plugin repository calls it on a new issue |
 | Hub release watcher | `.github/workflows/hub-release-watcher.yml` | every 30 minutes, and by hand |
 | Self test | `.github/workflows/self-test.yml` | on every push and PR here (offline tests, no API calls) |
+| Auth check | `.github/workflows/auth-check.yml` | by hand, and when the sign-in code or `federation.json` changes: signs in to Claude by federation and lists models, free |
 
 ## Reaching Claude: workload identity federation (no API key)
 
@@ -51,7 +52,8 @@ Set up once, in the Claude Console (an organization admin or owner):
 
 Each job that calls Claude has `id-token: write`, and so must each caller (the examples have it). The run log says
 which way it authenticated (`auth=federation`); if an exchange is refused, the Console's Workload identity >
-Authentication history shows why.
+Authentication history shows why. To test the sign-in alone, run **Actions > Auth check** (free: it lists models
+and sends no message).
 
 An `ANTHROPIC_API_KEY` secret still works as a fallback while `federation.json` is empty, but federation wins
 whenever both are there, and you never need the key.

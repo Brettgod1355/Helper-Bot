@@ -1,0 +1,36 @@
+name: Auth check
+
+# Proves Helper-Bot can sign in to Claude by workload identity federation. Free: it lists models and sends no
+# message. Runs by hand, and on a push that changes the sign-in code or federation.json.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, staging]
+    paths:
+      - federation.json
+      - .github/scripts/common.py
+      - .github/scripts/auth_check.py
+      - .github/workflows/auth-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  sign-in:
+    name: Sign in
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write # Claude by workload identity federation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Sign in and list models
+        run: python .github/scripts/auth_check.py
