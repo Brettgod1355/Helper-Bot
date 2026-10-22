@@ -32,7 +32,7 @@ Set up once, in the Claude Console (an organization admin or owner):
    | GitHub organization | `Brettgod1355` (a user account works), numeric ID `50088793` |
    | Repository, Branch / ref | blank: every repository you own, any branch or pull request |
    | Allowed events | Any event (the condition below narrows it) |
-   | Advanced: subject pattern | `repo:Brettgod1355/*` |
+   | Advanced: subject pattern | `repo:Brettgod1355@50088793/*`: GitHub's `sub` carries the owner and repository IDs (`repo:Brettgod1355@50088793/Helper-Bot@1430063823:ref:refs/heads/staging`), so the wizard's `repo:Brettgod1355/*` never matches |
    | Advanced: claims | `repository_owner` = `Brettgod1355`, `repository_owner_id` = `50088793` |
    | Advanced: audience | blank (the default, `https://api.anthropic.com`) |
    | Advanced: CEL condition | `claims.event_name != "pull_request_target" && ((has(claims.job_workflow_ref) && claims.job_workflow_ref.startsWith("Brettgod1355/Helper-Bot/.github/workflows/")) \|\| claims.workflow_ref.startsWith("Brettgod1355/Helper-Bot/.github/workflows/"))` |
