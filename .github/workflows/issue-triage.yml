@@ -39,7 +39,8 @@ on:
         default: main
     secrets:
       ANTHROPIC_API_KEY:
-        required: true
+        description: Only without workload identity federation (federation.json); leave it out otherwise
+        required: false
       BOT_APP_PRIVATE_KEY:
         description: The GitHub App's private key (with app_client_id)
         required: false
@@ -55,6 +56,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      id-token: write # Claude by workload identity federation
     steps:
       - name: Bot identity (GitHub App)
         id: app-token

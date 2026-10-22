@@ -183,8 +183,8 @@ def build_stress_prompt(root: Path, base: str, head: str) -> str:
 def run_audit(mode: str) -> dict:
     root = Path.cwd()
     result: dict = {"mode": mode, "model": common.model_name(), "status": "ok"}
-    if not common.api_key_available():
-        result.update(status="skipped", reason="ANTHROPIC_API_KEY is not available to this run (a fork PR gets no secrets).")
+    if not common.claude_available():
+        result.update(status="skipped", reason=common.NO_CLAUDE)
         return result
 
     base, head = resolve_shas(root)

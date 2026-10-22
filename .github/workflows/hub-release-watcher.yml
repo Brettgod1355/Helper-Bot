@@ -25,6 +25,9 @@ jobs:
   watch:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # Claude by workload identity federation
     steps:
       - uses: actions/checkout@v4
         with:

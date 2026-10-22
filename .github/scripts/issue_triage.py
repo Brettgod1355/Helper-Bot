@@ -240,8 +240,8 @@ def triage(repo, issue, *, dry_run: bool, manual: bool) -> None:
     if not dry_run and find_bot_reply(issue) is not None:
         print(f"#{issue.number} already has a triage reply; skipping.")
         return
-    if not common.api_key_available():
-        print("ANTHROPIC_API_KEY is not available to this run; nothing to do.")
+    if not common.claude_available():
+        print(f"{common.NO_CLAUDE}; nothing to do.")
         return
     limit = daily_limit()
     if not manual and limit and answered_today(repo) >= limit:
@@ -289,8 +289,8 @@ def followup(repo, issue, event: dict, *, dry_run: bool) -> None:
     if "setting" not in [label.name for label in issue.labels] or find_bot_reply(issue) is None:
         print(f"#{issue.number} has no setting answer from the bot to follow up; nothing to do.")
         return
-    if not common.api_key_available():
-        print("ANTHROPIC_API_KEY is not available to this run; nothing to do.")
+    if not common.claude_available():
+        print(f"{common.NO_CLAUDE}; nothing to do.")
         return
 
     bot_reply = find_bot_reply(issue).body.replace(REPLY_MARKER, "").strip()

@@ -18,7 +18,74 @@ import issue_triage  # noqa: E402
 import pr_audit  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def no_real_credentials(monkeypatch, tmp_path):
+    """Every test starts with no API key, no GitHub identity token and no federation IDs, whatever the machine has."""
+    for name in ["ANTHROPIC_API_KEY", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+                 *common.FEDERATION_FIELDS.values()]:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(common, "FEDERATION_FILE", tmp_path / "no-federation.json")
+
+
+FEDERATION = {"federation_rule_id": "fdrl_test", "organization_id": "00000000-0000-0000-0000-000000000000",
+              "service_account_id": "svac_test", "workspace_id": ""}
+
+
+def _federate(monkeypatch, tmp_path, settings=FEDERATION):
+    path = tmp_path / "federation.json"
+    path.write_text(json.dumps(settings))
+    monkeypatch.setattr(common, "FEDERATION_FILE", path)
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.example/oidc?api-version=2.0")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-token")
+
+
 # ---------- common ----------
+
+def test_federation_settings_from_file_with_environment_overrides(monkeypatch, tmp_path):
+    assert common.federation_settings() is None  # no file
+    _federate(monkeypatch, tmp_path, {**FEDERATION, "service_account_id": ""})
+    assert common.federation_settings() is None  # a required ID is missing
+    monkeypatch.setenv("ANTHROPIC_SERVICE_ACCOUNT_ID", "svac_env")
+    monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_env")
+    assert common.federation_settings() == {**FEDERATION, "service_account_id": "svac_env", "workspace_id": "wrkspc_env"}
+
+
+def test_the_shipped_federation_file_has_every_field():
+    shipped = Path(__file__).resolve().parents[1] / "federation.json"
+    assert set(json.loads(shipped.read_text())) == set(common.FEDERATION_FIELDS)
+
+
+def test_auth_method_prefers_federation_and_needs_a_github_identity_token(monkeypatch, tmp_path):
+    assert common.auth_method() is None and not common.claude_available()
+    with pytest.raises(RuntimeError, match="no Claude credentials"):
+        common.client_kwargs()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "  ")
+    assert common.auth_method() is None  # blank is not a key
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert common.auth_method() == "api_key" and common.client_kwargs() == {"api_key": "sk-test"}
+    _federate(monkeypatch, tmp_path)
+    assert common.auth_method() == "federation"  # a leftover key does not take over
+    assert set(common.client_kwargs()) == {"credentials"}
+    monkeypatch.delenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")  # no `id-token: write`, or a fork's pull request
+    assert common.auth_method() == "api_key"
+
+
+def test_github_identity_token_asks_for_the_anthropic_audience(monkeypatch, tmp_path):
+    import requests
+
+    _federate(monkeypatch, tmp_path)
+    seen = {}
+
+    def fake_get(url, *, params, headers, timeout):
+        seen.update(url=url, params=params, headers=headers)
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"value": "jwt-from-github"})
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    assert common.github_identity_token() == "jwt-from-github"
+    assert seen["url"] == "https://token.example/oidc?api-version=2.0"
+    assert seen["params"] == {"audience": "https://api.anthropic.com"}
+    assert seen["headers"] == {"Authorization": "Bearer request-token"}
+
 
 def test_thinking_budget_only_on_models_that_accept_it():
     assert common.thinking_params("claude-opus-4-6", 16000) == {"type": "enabled", "budget_tokens": 16000}
@@ -145,9 +212,9 @@ def test_run_audit_end_to_end_with_a_stubbed_claude(plugin_repo, monkeypatch):
     assert "startUp adds \\| shutDown" in section  # table-safe
 
 
-def test_run_audit_skips_without_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    assert pr_audit.run_audit("compliance")["status"] == "skipped"
+def test_run_audit_skips_without_credentials():
+    result = pr_audit.run_audit("compliance")
+    assert result["status"] == "skipped" and "no Claude credentials" in result["reason"]
 
 
 def test_report_combines_sections_in_order_with_marker(tmp_path):
@@ -537,7 +604,8 @@ def test_ask_claude_request_shape_and_streamed_answer(monkeypatch):
 
     real = anthropic.Anthropic
     monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: real(
-        api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kw))
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kw))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     monkeypatch.setenv("CLAUDE_MODEL", "claude-opus-4-6")
 
     text = common.ask_claude("sys", "user", max_tokens=32000, thinking_budget=16000)
@@ -571,7 +639,8 @@ def test_opus_5_5_request_uses_the_beta_endpoint_with_fallbacks(monkeypatch):
 
     real = anthropic.Anthropic
     monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: real(
-        api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kw))
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kw))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     monkeypatch.delenv("CLAUDE_MODEL", raising=False)
 
     text = common.ask_claude("sys", "user", max_tokens=64000, effort="high", thinking_budget=16000)
@@ -581,3 +650,46 @@ def test_opus_5_5_request_uses_the_beta_endpoint_with_fallbacks(monkeypatch):
     assert body["thinking"] == {"type": "adaptive"} and body["output_config"] == {"effort": "high"}
     assert "server-side-fallback-2026-07-01" in captured["beta"]
     assert "betas" not in body
+
+
+def test_federation_exchanges_a_fresh_github_token_then_calls_claude_with_it(monkeypatch, tmp_path):
+    import anthropic
+    import httpx2 as httpx
+
+    _federate(monkeypatch, tmp_path, {**FEDERATION, "workspace_id": "wrkspc_test"})
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # an unset secret arrives as an empty string
+    jwts = iter(["jwt-1", "jwt-2"])
+    monkeypatch.setattr(common, "github_identity_token", lambda: next(jwts))
+    seen = {"exchanges": []}
+
+    def handler(request):
+        if request.url.path == "/v1/oauth/token":
+            seen["exchanges"].append(json.loads(request.content))
+            return httpx.Response(200, json={"access_token": "sk-ant-oat01-test", "token_type": "Bearer",
+                                             "expires_in": 600, "scope": "workspace:developer"})
+        seen["authorization"] = request.headers.get("authorization")
+        seen["x-api-key"] = request.headers.get("x-api-key")
+        events = [
+            {"type": "message_start", "message": {"id": "msg_1", "type": "message", "role": "assistant",
+             "model": "claude-opus-5-5", "content": [], "stop_reason": None, "stop_sequence": None,
+             "usage": {"input_tokens": 10, "output_tokens": 0}}},
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "hi"}},
+            {"type": "content_block_stop", "index": 0},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None}, "usage": {"output_tokens": 1}},
+            {"type": "message_stop"},
+        ]
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=_sse(events))
+
+    transport = httpx.MockTransport(handler)
+    real_client, real_credentials = anthropic.Anthropic, anthropic.WorkloadIdentityCredentials
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: real_client(http_client=httpx.Client(transport=transport), **kw))
+    monkeypatch.setattr(anthropic, "WorkloadIdentityCredentials",
+                        lambda **kw: real_credentials(http_client=httpx.Client(transport=transport), **kw))
+
+    assert common.ask_claude("sys", "user", max_tokens=100, effort="medium") == "hi"
+    exchange = seen["exchanges"][0]
+    assert exchange["grant_type"] == "urn:ietf:params:oauth:grant-type:jwt-bearer" and exchange["assertion"] == "jwt-1"
+    assert exchange["federation_rule_id"] == "fdrl_test" and exchange["service_account_id"] == "svac_test"
+    assert exchange["organization_id"] == FEDERATION["organization_id"] and exchange["workspace_id"] == "wrkspc_test"
+    assert seen["authorization"] == "Bearer sk-ant-oat01-test" and not seen["x-api-key"]

@@ -13,6 +13,46 @@ Everything starts in **dry run**: it prints what it would post and changes nothi
 | Hub release watcher | `.github/workflows/hub-release-watcher.yml` | every 30 minutes, and by hand |
 | Self test | `.github/workflows/self-test.yml` | on every push and PR here (offline tests, no API calls) |
 
+## Reaching Claude: workload identity federation (no API key)
+
+The workflows reach Claude without any stored key. Each run asks GitHub for a short-lived identity token that says
+which repository and which workflow it is, and Anthropic swaps it for an access token that lasts minutes. One rule
+in the Claude Console decides who may do that, so a new plugin repository needs nothing added in the Console or in
+its secrets: only the caller files below. ([Anthropic's guide](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions))
+
+Set it up once, in the Claude Console (an organization admin or owner):
+
+1. **A workspace for the bot** (Settings > Workspaces), e.g. `helper-bot`, with a spend limit. Usage and the
+   limit then cover every repository together.
+2. **Settings > Workload identity > Connect workload > GitHub Actions.** The wizard creates the issuer
+   (`https://token.actions.githubusercontent.com`, discovery), a service account (e.g. `helper-bot`, a member of
+   that workspace) and the federation rule. The rule:
+
+   | Field | Value |
+   |---|---|
+   | Audience | `https://api.anthropic.com` |
+   | Claims | `repository_owner` = `Brettgod1355` |
+   | Condition (CEL) | `(has(claims.job_workflow_ref) && claims.job_workflow_ref.startsWith("Brettgod1355/Helper-Bot/.github/workflows/")) \|\| claims.workflow_ref.startsWith("Brettgod1355/Helper-Bot/.github/workflows/")` |
+   | Workspace | the bot's workspace |
+   | Scope | `workspace:inference` (the bot only sends messages) |
+   | Token lifetime | the wizard's 600 seconds is fine |
+
+   In words: a run in one of your own repositories, running one of Helper-Bot's workflows. `job_workflow_ref` is
+   the reusable workflow a plugin repository calls; `workflow_ref` covers the release watcher, which runs here.
+   Someone else's repository fails the owner check, and a pull request from a fork gets no identity token from
+   GitHub at all.
+3. Copy the rule ID (`fdrl_...`), the service account ID (`svac_...`), the organization ID (Settings >
+   Organization) and, only if the rule covers more than one workspace, the workspace ID (`wrkspc_...`) into
+   `federation.json` here and commit it. They are identifiers, not secrets (Anthropic calls them safe to commit):
+   without a GitHub token that passes the rule they let nobody in.
+
+Each job that calls Claude has `id-token: write`, and so must each caller (the examples have it). The run log says
+which way it authenticated (`auth=federation`); if an exchange is refused, the Console's Workload identity >
+Authentication history shows why.
+
+An `ANTHROPIC_API_KEY` secret still works as a fallback while `federation.json` is empty, but federation wins
+whenever both are there, and you never need the key.
+
 ## Secrets and variables
 
 Add these under **Settings > Secrets and variables > Actions**.
@@ -21,7 +61,6 @@ Add these under **Settings > Secrets and variables > Actions**.
 
 | Name | Kind | What it is |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Secret | A Claude API key from the Anthropic Console (console.anthropic.com > API keys). Used for release notes. |
 | `GH_PAT` | Secret | A fine-grained personal access token (GitHub > Settings > Developer settings > Fine-grained tokens). Repository access: only the plugin repositories in `plugins.json`. Permissions: **Contents: Read and write** (tags and releases), Metadata: Read. Give it an expiry and renew it. |
 | `DISCORD_WEBHOOK_URL` | Secret | Discord channel > Edit Channel > Integrations > Webhooks > New Webhook > Copy Webhook URL. Optional: without it, no Discord post. |
 | `HUB_WATCHER_LIVE` | Variable | `true` lets the **scheduled** watcher publish. Leave unset while testing: scheduled runs then only log that the pin moved and spend no Claude tokens. |
@@ -32,7 +71,6 @@ Add these under **Settings > Secrets and variables > Actions**.
 
 | Name | Kind | What it is |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Secret | The same Claude API key (or one per repository, to see each one's spend in the Console). |
 | `BOT_APP_CLIENT_ID` | Variable | Optional. Your helper bot's GitHub App Client ID (see "The helper bot's own account" below). |
 | `BOT_APP_PRIVATE_KEY` | Secret | Optional. That app's private key: the whole `.pem` file's text. |
 
@@ -42,16 +80,15 @@ you give it its own account.
 ## Visibility
 
 **This repository is public**, because a public repository can only call reusable workflows from a public
-repository. Its secrets stay private: forks and other people's workflows never see them, and each plugin repository
-passes its own `ANTHROPIC_API_KEY` to the reusable workflows.
+repository. Its secrets stay private, and it holds no Claude key: access comes from the federation rule above.
 
 ## Who can use it, and on what
 
-- **Only repositories that hold your `ANTHROPIC_API_KEY` secret spend your credits.** Anyone can call these public
-  workflows from their own repository, but a caller can only hand over its own secrets, so they would spend their
-  own key. Secrets are never shown in logs and never copied to forks.
-- **Forks:** a fork does not inherit your secrets, and pull requests from forks get none either (the example PR
-  audit skips them). Only your own branches and the issues on your own repositories use your key.
+- **Only your own repositories spend your credits.** Anyone can call these public workflows from their own
+  repository, but their runs carry their own name as `repository_owner`, so the federation rule refuses them.
+- **Forks:** a fork belongs to someone else, and a pull request from a fork gets no identity token from GitHub
+  (the example PR audit skips them anyway). Only your own branches and the issues on your own repositories reach
+  Claude.
 - **Each repository gets only its own context.** The workflows check out the repository that called them and read
   its own `.github/BOT_CONTEXT.md` and `CLAUDE.md`; nothing from another plugin is ever sent. Each repository's
   caller also sets its own inputs (dry run, which audits, `maintainer`, `bug_tip`, the daily limit).
@@ -66,9 +103,9 @@ From the PC, per repository:
 1. Copy `examples/pr-audit.yml` (every plugin) and `examples/issue-triage.yml` (public plugins) into its
    `.github/workflows/`, and optionally `examples/BOT_CONTEXT.md` to `.github/BOT_CONTEXT.md`. Commit them the way
    that repository takes changes.
-2. Add the key without it ever appearing on screen: `gh secret set ANTHROPIC_API_KEY -R Brettgod1355/<repo>` (it
-   asks for the value). For the bot's own account, also `gh variable set BOT_APP_CLIENT_ID -R Brettgod1355/<repo>`
-   and `gh secret set BOT_APP_PRIVATE_KEY -R Brettgod1355/<repo> < your-app.private-key.pem`, and install the app on
+2. Nothing for Claude: the federation rule already covers every repository you own. For the bot's own account,
+   `gh variable set BOT_APP_CLIENT_ID -R Brettgod1355/<repo>` and
+   `gh secret set BOT_APP_PRIVATE_KEY -R Brettgod1355/<repo> < your-app.private-key.pem`, and install the app on
    that repository.
 3. Test in dry run (open a test PR; run "Issue triage" by hand on an issue), then set `dry_run: false`.
 
@@ -89,8 +126,8 @@ plus `pr_number` (to re-run on a PR by hand), `model` (default `claude-opus-5-5`
   comment on the PR holds both, and it is edited in place on every push instead of adding new comments.
 
 The audit reads `BOT_CONTEXT.md` and `CLAUDE.md` from the PR's **base** branch, so a PR cannot rewrite the
-reviewer's instructions. PRs from forks are skipped in the example caller: forks get no secrets, and their code
-should not decide what a paid API is asked.
+reviewer's instructions. PRs from forks are skipped in the example caller: GitHub gives them no identity token,
+and their code should not decide what a paid API is asked.
 
 ## Issue triage
 

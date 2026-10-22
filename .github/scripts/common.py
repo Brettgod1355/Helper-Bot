@@ -26,6 +26,19 @@ MAX_PROMPT_CHARS = 2_400_000
 # Directories that are never part of the plugin's own source.
 SKIP_DIRS = {".git", ".helper-bot", "build", ".gradle", "out", "node_modules", ".idea"}
 
+# Workload identity federation: the IDs from the Claude Console, kept at the root of Helper-Bot so every plugin
+# repository uses the same ones. They are identifiers, not secrets: without a GitHub token that matches the rule
+# they let nobody in. Each can be overridden by the environment variable of the same meaning.
+FEDERATION_FILE = Path(__file__).resolve().parents[2] / "federation.json"
+FEDERATION_FIELDS = {
+    "federation_rule_id": "ANTHROPIC_FEDERATION_RULE_ID",
+    "organization_id": "ANTHROPIC_ORGANIZATION_ID",
+    "service_account_id": "ANTHROPIC_SERVICE_ACCOUNT_ID",
+    "workspace_id": "ANTHROPIC_WORKSPACE_ID",
+}
+FEDERATION_REQUIRED = ("federation_rule_id", "organization_id", "service_account_id")
+GITHUB_OIDC_AUDIENCE = "https://api.anthropic.com"
+
 
 class TooLarge(Exception):
     """The prompt would not fit; the caller reports it instead of silently truncating."""
@@ -71,8 +84,79 @@ def answer_text(content) -> str:
     return "".join(block.text for block in content[last_fallback + 1 :] if block.type == "text")
 
 
-def api_key_available() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+def federation_settings() -> dict | None:
+    """The federation IDs from federation.json and the environment, or None until the required ones are set."""
+    try:
+        stored = json.loads(FEDERATION_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        stored = {}
+    settings = {key: os.environ.get(env, "").strip() or str(stored.get(key) or "").strip()
+                for key, env in FEDERATION_FIELDS.items()}
+    if not all(settings[key] for key in FEDERATION_REQUIRED):
+        return None
+    return settings
+
+
+def github_oidc_available() -> bool:
+    """GitHub sets these only in a job with `id-token: write`, and never for a pull request from a fork."""
+    return bool(os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL") and os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
+
+
+def github_identity_token() -> str:
+    """A new GitHub Actions identity token for Anthropic.
+
+    Fetched on every call: Anthropic accepts each token only once (its `jti`), and the SDK calls this again for
+    every token exchange, so a long run never re-sends a used one.
+    """
+    import requests
+
+    resp = requests.get(
+        os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"],
+        params={"audience": GITHUB_OIDC_AUDIENCE},
+        headers={"Authorization": f"Bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["value"]
+
+
+def auth_method() -> str | None:
+    """How this run reaches Claude: "federation", "api_key", or None when it cannot.
+
+    Federation comes first, so a leftover ANTHROPIC_API_KEY secret never quietly takes over once it is set up.
+    """
+    if federation_settings() is not None and github_oidc_available():
+        return "federation"
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return "api_key"
+    return None
+
+
+def claude_available() -> bool:
+    return auth_method() is not None
+
+
+NO_CLAUDE = ("no Claude credentials in this run: federation needs federation.json filled in and `id-token: write` "
+             "(a pull request from a fork never gets one), else an ANTHROPIC_API_KEY secret")
+
+
+def client_kwargs() -> dict:
+    """Credentials for anthropic.Anthropic(), passed explicitly so an empty environment variable never decides."""
+    method = auth_method()
+    if method == "federation":
+        from anthropic import WorkloadIdentityCredentials
+
+        settings = federation_settings()
+        return {"credentials": WorkloadIdentityCredentials(
+            identity_token_provider=github_identity_token,
+            federation_rule_id=settings["federation_rule_id"],
+            organization_id=settings["organization_id"],
+            service_account_id=settings["service_account_id"],
+            workspace_id=settings["workspace_id"] or None,
+        )}
+    if method == "api_key":
+        return {"api_key": os.environ["ANTHROPIC_API_KEY"].strip()}
+    raise RuntimeError(NO_CLAUDE)
 
 
 def ask_claude(system: str, user: str, *, max_tokens: int, effort: str = "high",
@@ -90,14 +174,14 @@ def ask_claude(system: str, user: str, *, max_tokens: int, effort: str = "high",
     model = model_name()
     params = request_params(model, system, user, max_tokens=max_tokens, effort=effort,
                             thinking_budget=thinking_budget)
-    client = anthropic.Anthropic(max_retries=4)
+    client = anthropic.Anthropic(max_retries=4, **client_kwargs())
     messages = client.beta.messages if "betas" in params else client.messages
     with messages.stream(**params) as stream:
         message = stream.get_final_message()
 
     usage = message.usage
     print(
-        f"[claude] model={model} served_by={message.model} stop={message.stop_reason} "
+        f"[claude] auth={auth_method()} model={model} served_by={message.model} stop={message.stop_reason} "
         f"input_tokens={usage.input_tokens} output_tokens={usage.output_tokens}",
         file=sys.stderr,
     )

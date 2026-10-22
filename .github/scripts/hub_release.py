@@ -7,7 +7,9 @@ commit `v<version>`, publish the GitHub release and post the announcement to Dis
 
 Environment:
     GH_PAT               token that can read and write releases in the plugin repositories
-    ANTHROPIC_API_KEY    Claude API key
+    ACTIONS_ID_TOKEN_*   set by GitHub with `id-token: write`; Claude is reached by workload identity
+                         federation (federation.json), or else by
+    ANTHROPIC_API_KEY    a Claude API key
     DISCORD_WEBHOOK_URL  optional; the announcement is skipped without it
     DRY_RUN              "true" prints everything and changes nothing (default)
     MANUAL               "true" on workflow_dispatch: also writes notes when nothing changed, as a test

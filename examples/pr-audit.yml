@@ -11,7 +11,8 @@ concurrency:
 
 jobs:
   audit:
-    # Skip drafts, and PRs from forks (they get no secrets, and their code should not reach a paid API).
+    # Skip drafts, and PRs from forks (GitHub gives them no identity token, and their code should not reach a
+    # paid API).
     if: >-
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -20,9 +21,8 @@ jobs:
       run_hub_compliance: true
       run_deep_stress_test: true
       dry_run: true   # false = post the scorecard as one PR comment, updated on every push
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     permissions:
       contents: read
+      id-token: write # lets Helper-Bot reach Claude by workload identity federation; no API key
       issues: write
       pull-requests: write

@@ -38,8 +38,8 @@ jobs:
       bug_tip: ""            # optional Markdown added to bug replies
       app_client_id: ${{ vars.BOT_APP_CLIENT_ID }}   # empty = post as github-actions[bot]
     secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       BOT_APP_PRIVATE_KEY: ${{ secrets.BOT_APP_PRIVATE_KEY }}
     permissions:
       contents: read
       issues: write
+      id-token: write # lets Helper-Bot reach Claude by workload identity federation; no API key
