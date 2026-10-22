@@ -20,31 +20,34 @@ which repository and which workflow it is, and Anthropic swaps it for an access 
 in the Claude Console decides who may do that, so a new plugin repository needs nothing added in the Console or in
 its secrets: only the caller files below. ([Anthropic's guide](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions))
 
-Set it up once, in the Claude Console (an organization admin or owner):
+Set up once, in the Claude Console (an organization admin or owner):
 
-1. **A workspace for the bot** (Settings > Workspaces), e.g. `helper-bot`, with a spend limit. Usage and the
-   limit then cover every repository together.
-2. **Settings > Workload identity > Connect workload > GitHub Actions.** The wizard creates the issuer
-   (`https://token.actions.githubusercontent.com`, discovery), a service account (e.g. `helper-bot`, a member of
-   that workspace) and the federation rule. The rule:
+1. **Settings > Workload identity > Connect workload > GitHub Actions.** The wizard registers the issuer
+   (`https://token.actions.githubusercontent.com`), then the rule, then a service account. The rule as set up on
+   2026-10-22:
 
    | Field | Value |
    |---|---|
-   | Audience | `https://api.anthropic.com` |
-   | Claims | `repository_owner` = `Brettgod1355` |
-   | Condition (CEL) | `(has(claims.job_workflow_ref) && claims.job_workflow_ref.startsWith("Brettgod1355/Helper-Bot/.github/workflows/")) \|\| claims.workflow_ref.startsWith("Brettgod1355/Helper-Bot/.github/workflows/")` |
-   | Workspace | the bot's workspace |
-   | Scope | `workspace:inference` (the bot only sends messages) |
-   | Token lifetime | the wizard's 600 seconds is fine |
+   | GitHub organization | `Brettgod1355` (a user account works), numeric ID `50088793` |
+   | Repository, Branch / ref | blank: every repository you own, any branch or pull request |
+   | Allowed events | Any event (the condition below narrows it) |
+   | Advanced: subject pattern | `repo:Brettgod1355/*` |
+   | Advanced: claims | `repository_owner` = `Brettgod1355`, `repository_owner_id` = `50088793` |
+   | Advanced: audience | blank (the default, `https://api.anthropic.com`) |
+   | Advanced: CEL condition | `claims.event_name != "pull_request_target" && ((has(claims.job_workflow_ref) && claims.job_workflow_ref.startsWith("Brettgod1355/Helper-Bot/.github/workflows/")) \|\| claims.workflow_ref.startsWith("Brettgod1355/Helper-Bot/.github/workflows/"))` |
+   | Workspaces | one: Default (the Console's credit is the spending cap; a workspace with its own limit can come later) |
+   | OAuth scope | `workspace:developer` (the wizard offers no narrower one; never `org:admin`) |
+   | Token lifetime | 10 minutes |
+   | Service account | new, `helper-bot` |
 
-   In words: a run in one of your own repositories, running one of Helper-Bot's workflows. `job_workflow_ref` is
-   the reusable workflow a plugin repository calls; `workflow_ref` covers the release watcher, which runs here.
-   Someone else's repository fails the owner check, and a pull request from a fork gets no identity token from
-   GitHub at all.
-3. Copy the rule ID (`fdrl_...`), the service account ID (`svac_...`), the organization ID (Settings >
-   Organization) and, only if the rule covers more than one workspace, the workspace ID (`wrkspc_...`) into
-   `federation.json` here and commit it. They are identifiers, not secrets (Anthropic calls them safe to commit):
-   without a GitHub token that passes the rule they let nobody in.
+   In words: a run in one of your own repositories, running one of Helper-Bot's workflows, never on
+   `pull_request_target` (the trigger that would run a fork's pull request with your repository's permissions).
+   `job_workflow_ref` is the reusable workflow a plugin repository calls; `workflow_ref` covers the release watcher,
+   which runs here. Someone else's repository fails the owner checks, and a pull request from a fork gets no
+   identity token from GitHub at all.
+2. The rule ID (`fdrl_...`), service account ID (`svac_...`), organization ID and workspace ID are in
+   `federation.json`. They are identifiers, not secrets (Anthropic calls them safe to commit): without a GitHub
+   token that passes the rule they let nobody in. The wizard's test step shows them all.
 
 Each job that calls Claude has `id-token: write`, and so must each caller (the examples have it). The run log says
 which way it authenticated (`auth=federation`); if an exchange is refused, the Console's Workload identity >
