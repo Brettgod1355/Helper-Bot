@@ -40,14 +40,18 @@ DISCORD_LIMIT = 2000
 MAX_PATCH_CHARS = 300_000
 PATCH_PATHS = ("src/main/", "runelite-plugin.properties", "README.md")
 
-# The release sections, in the order the owner's releases use them (AFK Shipwrecks 2.2 and 2.3, 2026-10-19).
+# The owner's release groups, in their order (owner, 2026-10-22: "use those groups with emojis"; the same list for
+# every plugin). Each change goes in the first group that fits; empty groups are left out.
 SECTIONS = (
     ("heads_up", "⚠️ Heads-up"),
+    ("privacy", "🔒 Privacy"),
     ("accuracy", "🎯 Accuracy"),
     ("bug_fixes", "🐛 Bug Fixes"),
+    ("performance", "⚡ Performance"),
     ("settings", "⚙️ Settings and Defaults"),
     ("new_features", "✨ New Features"),
     ("improvements", "🔧 Improvements"),
+    ("experimental", "🧪 Experimental"),
     ("wiki", "📚 Wiki and Media"),
 )
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -66,16 +70,21 @@ the commits and diff do not support. Use setting and section names exactly as pl
 `@ConfigItem` and `@ConfigSection`), in bold. American spelling (color, gray, favorite), but game names exactly as \
 the game spells them (Defence, armour, Sailing).
 
-Release notes: each change goes in exactly one section; most sections stay empty. Each bullet starts with a short \
-bold lead-in and a colon, then what it means for the player, for example: \
-"**A more accurate hold count:** a Deposit-all you click away from is counted right."
-- heads_up: something a player should know before updating (a setting renamed or moved, a look that changed).
-- accuracy: counts, timers and estimates that are now more accurate.
-- bug_fixes: something that was wrong and is fixed.
-- settings: changed defaults or settings ("for new installs"; say when existing players keep theirs).
-- new_features: something new players can do or see.
-- improvements: something that already existed and got better.
-- wiki: the plugin's README, wiki or videos (only when the changes show it).
+Release notes: every change goes in exactly one group, the first one in this list that fits; most groups stay \
+empty. A player-facing change is never dropped: one that fits no other group goes in improvements. Tests, tooling \
+and code tidying never appear. Each bullet starts with a short bold lead-in and a colon, then what it means for the \
+player, for example: "**A more accurate hold count:** a Deposit-all you click away from is counted right."
+1. heads_up: changes something the player already uses (a renamed or moved setting, a removed option, a different \
+look of something they had).
+2. privacy: what is or is not recorded or sent.
+3. accuracy: the plugin's counts, timers and estimates closer to the game.
+4. bug_fixes: something was wrong and is not any more.
+5. performance: lighter on frames, less lag.
+6. settings: new settings, and defaults for new installs (say that existing players keep theirs).
+7. new_features: something new players can do or see.
+8. improvements: something that already existed and got better; the catch-all.
+9. experimental: off by default, to try.
+10. wiki: wiki pages, videos, the README (only when the changes show it).
 
 Discord announcement: the same release in the owner's chat layout. Group the changes into a few themed sections, \
 each with an emoji and a short topic as its heading ("🤫 Hide crew text", "🎯 Cargo hold count"), an optional \
@@ -89,11 +98,14 @@ Answer with one JSON object in a ```json fenced block, and nothing after it:
 
 {
   "heads_up": ["bullet", ...],
+  "privacy": [...],
   "accuracy": [...],
   "bug_fixes": [...],
+  "performance": [...],
   "settings": [...],
   "new_features": [...],
   "improvements": [...],
+  "experimental": [...],
   "wiki": [...],
   "discord": [
     {"heading": "🤫 Hide crew text", "intro": "optional line, or empty", "bullets": ["short bullet", ...]},
@@ -231,16 +243,23 @@ def collect_changes(repo, base: str | None, head: str) -> str:
     return "\n".join(lines)
 
 
-def hub_date(hub, hub_name: str) -> str:
-    """'October 19, 2026': the day the Hub entry last changed, or today when that cannot be read."""
-    when = None
+def hub_date_line(hub, hub_name: str, today=None) -> str:
+    """'October 19, 2026' when the Hub entry last changed on an earlier day than today, else ''.
+
+    The owner's releases carry "On the Plugin Hub <date>." only when the release is made later than the Hub merge
+    (a backfilled release); one made the same day has no such line.
+    """
     try:
-        if hub is not None:
-            commits = hub.get_commits(path=f"plugins/{hub_name}")
-            when = commits[0].commit.committer.date if commits.totalCount else None
+        if hub is None:
+            return ""
+        commits = hub.get_commits(path=f"plugins/{hub_name}")
+        when = commits[0].commit.committer.date if commits.totalCount else None
     except Exception as exc:  # the date is a nicety; a release never waits on it
-        print(f"  Could not read the Hub entry's date ({type(exc).__name__}); using today.")
-    when = when or datetime.now(timezone.utc)
+        print(f"  Could not read the Hub entry's date ({type(exc).__name__}); leaving the date line out.")
+        return ""
+    today = today or datetime.now(timezone.utc).date()
+    if when is None or when.date() >= today:
+        return ""
     return f"{MONTHS[when.month - 1]} {when.day}, {when.year}"
 
 
@@ -388,7 +407,7 @@ def process(gh, hub, plugin: Plugin, *, dry_run: bool, manual: bool) -> None:
     example = next((getattr(r, "body", None) or "" for r in releases if r.tag_name == previous_tag), "")
     notes = write_notes(plugin, version, collect_changes(repo, base, pin), example)
     title = f"{plugin.display_name} {version}"
-    body = render_release_body(notes, plugin.repo, tag, previous_tag, hub_date(hub, plugin.hub_name))
+    body = render_release_body(notes, plugin.repo, tag, previous_tag, hub_date_line(hub, plugin.hub_name))
     messages = render_discord_messages(notes, plugin, version)
 
     preview = f"### {title} (tag {tag} on {pin[:7]})\n\n{body}\n\n#### Discord\n\n" + "\n\n---\n\n".join(

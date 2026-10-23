@@ -457,17 +457,18 @@ def test_release_body_matches_the_owners_releases():
     assert body.endswith("**Full Changelog**: https://github.com/Brettgod1355/AFK-Shipwrecks/compare/v2.3...v2.4")
     first = hub_release.render_release_body({}, PLUGIN.repo, "v1.0", None, "May 1, 2026")
     assert "Maintenance release" in first and first.endswith("/commits/v1.0")
-    assert [h for _, h in hub_release.SECTIONS] == ["⚠️ Heads-up", "🎯 Accuracy", "🐛 Bug Fixes",
-        "⚙️ Settings and Defaults", "✨ New Features", "🔧 Improvements", "📚 Wiki and Media"]
+    assert [h for _, h in hub_release.SECTIONS] == ["⚠️ Heads-up", "🔒 Privacy", "🎯 Accuracy", "🐛 Bug Fixes",
+        "⚡ Performance", "⚙️ Settings and Defaults", "✨ New Features", "🔧 Improvements", "🧪 Experimental",
+        "📚 Wiki and Media"]
 
 
-def test_hub_date_reads_the_entrys_last_change_and_falls_back_to_today():
-    from datetime import datetime
-    when = datetime(2026, 10, 19, 18, 53)
-    entry = SimpleNamespace(commit=SimpleNamespace(committer=SimpleNamespace(date=when)))
+def test_hub_date_line_only_when_the_release_is_made_on_a_later_day():
+    from datetime import date, datetime
+    entry = SimpleNamespace(commit=SimpleNamespace(committer=SimpleNamespace(date=datetime(2026, 10, 19, 18, 53))))
     hub = SimpleNamespace(get_commits=lambda path: _Commits([entry]))
-    assert hub_release.hub_date(hub, "cargo-hold-alert") == "October 19, 2026"
-    assert hub_release.hub_date(None, "x").endswith(str(datetime.now().year))
+    assert hub_release.hub_date_line(hub, "cargo-hold-alert", today=date(2026, 10, 23)) == "October 19, 2026"
+    assert hub_release.hub_date_line(hub, "cargo-hold-alert", today=date(2026, 10, 19)) == ""
+    assert hub_release.hub_date_line(None, "x") == ""
 
 
 class _Commits(list):

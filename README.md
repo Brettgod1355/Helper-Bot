@@ -200,9 +200,11 @@ Every run, for each plugin:
    asks Claude for player-friendly notes.
 4. Live: creates the annotated tag `v<version>` (version from `build.gradle` at the pinned commit) on **exactly**
    the pinned commit and publishes the release `<display_name> <version>` in the same format as the releases made by
-   hand: "On the Plugin Hub <date>." (the day the Hub entry changed), then only the sections that apply, in this
-   order: ⚠️ Heads-up, 🎯 Accuracy, 🐛 Bug Fixes, ⚙️ Settings and Defaults, ✨ New Features, 🔧 Improvements,
-   📚 Wiki and Media, each bullet with a bold lead-in, and the **Full Changelog** compare link.
+   hand: only the groups that apply, in this order: ⚠️ Heads-up, 🔒 Privacy, 🎯 Accuracy, 🐛 Bug Fixes,
+   ⚡ Performance, ⚙️ Settings and Defaults, ✨ New Features, 🔧 Improvements, 🧪 Experimental, 📚 Wiki and Media
+   (each change in the first group that fits, 🔧 the catch-all), each bullet with a bold lead-in, then the
+   **Full Changelog** compare link. A release made on a later day than the Hub merge starts with
+   "On the Plugin Hub <date>.".
 5. Posts the announcement to Discord in the owner's layout: the role ping, `# 📢 <Plugin> <version> is out!`, a few
    themed `## <emoji> <topic>` sections with an optional intro line, "🧹 Everything else", the closing line, and a
    link to the release.
