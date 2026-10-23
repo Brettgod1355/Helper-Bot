@@ -1,15 +1,13 @@
 """Issue triage for a RuneLite plugin repository.
 
-Three modes, picked from the event that started the run (or MODE):
+Two modes, picked from the event that started the run (or MODE):
 
     triage     a new issue: read it against the plugin's source, README and BOT_CONTEXT.md, reply,
                and give it one of the labels setting / bug / enhancement / question
     followup   the issue's author commented on an issue the bot answered as a setting: did it work?
-    reactions  hourly: a 👍 or 👎 from the issue's author on the bot's setting answer
 
-When the author says the setting fixed it (comment or 👍), the bot thanks them and closes the issue.
-When it did not (comment or 👎), the issue goes back to `bug` with `needs-maintainer`. Silence changes
-nothing. Dry run (the default) prints every reply and label change instead of making it.
+When the author replies that the setting fixed it, the bot thanks them and closes the issue. When it
+did not, the issue goes back to `bug` with `needs-maintainer`. Silence changes nothing. Dry run (the default) prints every reply and label change instead of making it.
 """
 
 from __future__ import annotations
@@ -101,8 +99,7 @@ def compose_reply(answer: str, label: str) -> str:
     """The comment as posted: the answer, a fixed line per label, then the footer."""
     parts = [REPLY_MARKER + "\n" + answer]
     if label == "setting":
-        parts.append("**Did this fix it? Please reply here and let us know whether it worked.** "
-                     "(A 👍 on this comment works too.)")
+        parts.append("**Did this fix it? Please reply here and let us know whether it worked.**")
     bug_tip = os.environ.get("BUG_TIP", "").strip()
     if label == "bug" and bug_tip:
         parts.append(bug_tip)
@@ -300,30 +297,6 @@ def followup(repo, issue, event: dict, *, dry_run: bool) -> None:
     apply_outcome(repo, issue, outcome if outcome in ("worked", "did_not_work") else "other", dry_run)
 
 
-def author_reaction(comment, author: str) -> str | None:
-    """'worked' or 'did_not_work' from the issue author's latest 👍 / 👎 on the bot's answer."""
-    votes = [r for r in comment.get_reactions() if r.user is not None and r.user.login == author and r.content in ("+1", "-1")]
-    if not votes:
-        return None
-    latest = max(votes, key=lambda r: r.created_at)
-    return "worked" if latest.content == "+1" else "did_not_work"
-
-
-def sweep_reactions(repo, *, dry_run: bool) -> None:
-    """Open issues the bot answered as a setting: act on the author's 👍 or 👎. No Claude call."""
-    issues = list(repo.get_issues(state="open", labels=["setting"]))
-    print(f"{len(issues)} open issue(s) labeled 'setting'.")
-    for issue in issues:
-        if issue.pull_request is not None or issue.user is None:
-            continue
-        reply = find_bot_reply(issue)
-        if reply is None:
-            continue
-        outcome = author_reaction(reply, issue.user.login)
-        if outcome:
-            apply_outcome(repo, issue, outcome, dry_run)
-
-
 def pick_mode(event_name: str, issue_number: int) -> str:
     forced = os.environ.get("MODE", "").strip()
     if forced and forced != "auto":
@@ -331,9 +304,7 @@ def pick_mode(event_name: str, issue_number: int) -> str:
     if event_name == "issue_comment":
         return "followup"
     if event_name == "schedule":
-        return "reactions"
-    if event_name == "workflow_dispatch" and not issue_number:
-        return "reactions"
+        return "idle"
     return "triage"
 
 
@@ -353,8 +324,9 @@ def main() -> None:
     repo = gh.get_repo(os.environ["GITHUB_REPOSITORY"])
     print(f"Mode: {mode}, {'dry run' if dry_run else 'LIVE'}")
 
-    if mode == "reactions":
-        sweep_reactions(repo, dry_run=dry_run)
+    if mode == "idle":
+        # Callers set up before the hourly reaction check was removed still run on a schedule.
+        print("Scheduled runs have nothing to do; remove the schedule from this repository's caller.")
         return
     if not number:
         raise SystemExit("No issue number: run on an issues or issue_comment event, or pass issue_number.")

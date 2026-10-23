@@ -1,12 +1,12 @@
 name: Issue triage
 
-# Reusable: a plugin repository calls this on issues: opened (triage), issue_comment: created
-# (the author's follow-up) and an hourly schedule (the author's 👍 / 👎). See README.md for the caller.
+# Reusable: a plugin repository calls this on issues: opened (triage) and issue_comment: created
+# (the author's follow-up). See README.md for the caller.
 on:
   workflow_call:
     inputs:
       issue_number:
-        description: Issue to triage (0 = the event's issue; on a schedule, 0 checks reactions)
+        description: Issue to triage (0 = the event's issue)
         type: number
         default: 0
       dry_run:

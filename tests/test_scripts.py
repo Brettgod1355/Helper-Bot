@@ -285,8 +285,7 @@ def test_pick_mode(monkeypatch):
     monkeypatch.delenv("MODE", raising=False)
     assert issue_triage.pick_mode("issues", 5) == "triage"
     assert issue_triage.pick_mode("issue_comment", 5) == "followup"
-    assert issue_triage.pick_mode("schedule", 0) == "reactions"
-    assert issue_triage.pick_mode("workflow_dispatch", 0) == "reactions"
+    assert issue_triage.pick_mode("schedule", 0) == "idle"  # an old caller's hourly schedule does nothing
     assert issue_triage.pick_mode("workflow_dispatch", 7) == "triage"
 
 
@@ -295,11 +294,8 @@ def _user(login, type="User"):
 
 
 class FakeComment:
-    def __init__(self, body, user, reactions=()):
-        self.body, self.user, self._reactions = body, user, list(reactions)
-
-    def get_reactions(self):
-        return self._reactions
+    def __init__(self, body, user):
+        self.body, self.user = body, user
 
 
 class FakeIssue:
@@ -351,8 +347,8 @@ class FakeLabelRepo:
         return [i for i in self.issues if i.state == state and all(n in [l.name for l in i.labels] for n in labels)]
 
 
-def _bot_reply(reactions=()):
-    return FakeComment(issue_triage.REPLY_MARKER + "\nTry the Count setting.", _user("helper[bot]", "Bot"), reactions)
+def _bot_reply():
+    return FakeComment(issue_triage.REPLY_MARKER + "\nTry the Count setting.", _user("helper[bot]", "Bot"))
 
 
 def test_triage_replies_with_footer_and_swaps_the_bug_label(plugin_repo, monkeypatch):
@@ -422,22 +418,6 @@ def test_followup_ignores_other_people_and_unanswered_issues(monkeypatch):
     fake_reply = FakeComment(issue_triage.REPLY_MARKER, _user("player"))  # the marker typed by a person
     issue_triage.followup(FakeLabelRepo(), FakeIssue(labels=["setting"], comments=[fake_reply]), author, dry_run=False)
     assert issue.log == []
-
-
-def test_reaction_sweep_counts_only_the_authors_latest_vote():
-    from datetime import datetime, timedelta
-    t = datetime(2026, 10, 22)
-    vote = lambda who, content, minutes: SimpleNamespace(user=_user(who), content=content, created_at=t + timedelta(minutes=minutes))  # noqa: E731
-    worked = FakeIssue(1, ["setting"], [_bot_reply([vote("player", "-1", 0), vote("player", "+1", 5)])])
-    failed = FakeIssue(2, ["setting"], [_bot_reply([vote("player", "-1", 0)])])
-    stranger = FakeIssue(3, ["setting"], [_bot_reply([vote("someone", "+1", 0)])])
-    party = FakeIssue(4, ["setting"], [_bot_reply([vote("player", "hooray", 0)])])
-    closed = FakeIssue(5, ["setting"], [_bot_reply([vote("player", "+1", 0)])], state="closed")
-    repo = FakeLabelRepo([worked, failed, stranger, party, closed])
-    issue_triage.sweep_reactions(repo, dry_run=False)
-    assert ("edit", {"state": "closed", "state_reason": "completed"}) in worked.log
-    assert ("add", ("bug", "needs-maintainer")) in failed.log
-    assert stranger.log == [] and party.log == [] and closed.log == []
 
 
 # ---------- hub release watcher ----------

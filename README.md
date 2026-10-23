@@ -97,9 +97,8 @@ repository. Its secrets stay private, and it holds no Claude key: access comes f
 - **Each repository gets only its own context.** The workflows check out the repository that called them and read
   its own `.github/BOT_CONTEXT.md` and `CLAUDE.md`; nothing from another plugin is ever sent. Each repository's
   caller also sets its own inputs (dry run, which audits, `maintainer`, `bug_tip`, the daily limit).
-- **Private repositories pay for Actions minutes** (public ones do not): the hourly reaction check alone is about
-  720 runner minutes a month. Issue triage is for public plugins, where players open issues; private ones only
-  need the PR audit.
+- **Private repositories pay for Actions minutes** (public ones do not). Issue triage is for public plugins, where
+  players open issues; private ones only need the PR audit.
 
 ## Adding it to a plugin repository
 
@@ -159,14 +158,12 @@ issues in any 24 hours, so a burst of spam cannot run through your credits; the 
 
 **Did the setting fix it?** Only for issues labeled `setting`, and only from the person who opened the issue:
 
-- They **reply** "that worked" (seen within a minute) or react **👍** to the bot's answer (checked hourly): the bot
-  thanks them and closes the issue as completed.
-- They reply that it didn't, or react **👎**: the bot puts `bug` back, adds `needs-maintainer`, and says you will
-  take a look.
-- No answer: nothing happens.
+- They **reply** that it worked (seen within a minute): the bot thanks them and closes the issue as completed.
+- They reply that it didn't: the bot puts `bug` back, adds `needs-maintainer`, and says you will take a look.
+- No reply: nothing happens. Reactions are not read (GitHub cannot start a workflow on one), which is why the
+  answer asks for a reply.
 
-GitHub cannot start a workflow on a reaction, so the caller also runs hourly to read them (no Claude call). The
-`setting` and `needs-maintainer` labels are created the first time they are needed.
+The `setting` and `needs-maintainer` labels are created the first time they are needed.
 
 ### The helper bot's own account
 
@@ -226,7 +223,6 @@ billed as output); the run log prints the real token counts of every request.
 | Deep stress test | whole `src/main/java`, ~50-150k tokens, high effort | $0.40-1.50 |
 | Issue triage | the plugin's whole source + README, ~20-60k tokens, medium effort | $0.15-0.40 |
 | Follow-up reply | the bot's answer + the player's reply, low effort | about $0.01 |
-| Hourly reaction check | GitHub API only | $0 |
 | Release notes | commits + diff since the last release, medium effort | $0.15-0.80 |
 | Watcher with nothing new | Plugin Hub file and one GitHub API call per plugin | $0 |
 
