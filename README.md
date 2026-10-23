@@ -183,11 +183,12 @@ Without it, replies come from `github-actions[bot]`. With a GitHub App they come
 `plugins.json` lists the plugins to watch:
 
 ```json
-[{"hub_name": "afk-shipwrecks", "repo": "Brettgod1355/AFK-Shipwrecks", "display_name": "AFK Shipwrecks",
+[{"hub_name": "cargo-hold-alert", "repo": "Brettgod1355/AFK-Shipwrecks", "display_name": "AFK Shipwrecks",
   "discord": {"role_id": "<role to ping>", "closing_line": "<last line of the post>"}}]
 ```
 
-`discord` is optional. `hub_name` is the file name under `plugins/` in runelite/plugin-hub.
+`discord` is optional. `hub_name` is the file name under `plugins/` in runelite/plugin-hub, which keeps a plugin's
+first name after a rename (AFK Shipwrecks is still `cargo-hold-alert`).
 
 Every run, for each plugin:
 
@@ -195,12 +196,16 @@ Every run, for each plugin:
    checks that its `repository=` is the plugin's repository.
 2. Compares its `commit=` with the commit of the plugin's latest GitHub release. Same commit: done.
 3. When the pin has moved, collects the commits and the diff since the latest release (or since the previous Hub
-   pin when there is no release yet) and asks Claude for player-friendly notes in New Features, Improvements and
-   Bug Fixes.
+   pin when there is no release yet), adds the previous release's notes as an example of the voice to match, and
+   asks Claude for player-friendly notes.
 4. Live: creates the annotated tag `v<version>` (version from `build.gradle` at the pinned commit) on **exactly**
-   the pinned commit, publishes the release `<display_name> <version>` with a Full Changelog compare link, and
-   posts the announcement to Discord: the role ping, `# 📢 <Plugin> <version> is out!`, one section per group, the
-   closing line, and a link to the release.
+   the pinned commit and publishes the release `<display_name> <version>` in the same format as the releases made by
+   hand: "On the Plugin Hub <date>." (the day the Hub entry changed), then only the sections that apply, in this
+   order: ⚠️ Heads-up, 🎯 Accuracy, 🐛 Bug Fixes, ⚙️ Settings and Defaults, ✨ New Features, 🔧 Improvements,
+   📚 Wiki and Media, each bullet with a bold lead-in, and the **Full Changelog** compare link.
+5. Posts the announcement to Discord in the owner's layout: the role ping, `# 📢 <Plugin> <version> is out!`, a few
+   themed `## <emoji> <topic>` sections with an optional intro line, "🧹 Everything else", the closing line, and a
+   link to the release.
 
 Safety: a tag that already exists on a different commit is never moved (the run says so and skips); a version
 that is already released is never published twice; one plugin's failure does not stop the others.

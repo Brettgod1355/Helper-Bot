@@ -440,25 +440,47 @@ NOTES = {
     "new_features": ["**Hide crew text:** quiet decks."],
     "improvements": [],
     "bug_fixes": ["**Hold count:** right after a Deposit-all."],
-    "discord": {"new_features": ["Hide crew text"], "improvements": [], "bug_fixes": ["Hold count fix"]},
+    "discord": [
+        {"heading": "🤫 Hide crew text", "intro": "Busy spots get noisy.", "bullets": ["Hidden at salvaging spots"]},
+        {"heading": "🧹 Everything else", "intro": "", "bullets": ["Hold count fix"]},
+        {"heading": "empty", "bullets": []},
+    ],
 }
-PLUGIN = hub_release.Plugin("afk-shipwrecks", "Brettgod1355/AFK-Shipwrecks", "AFK Shipwrecks",
+PLUGIN = hub_release.Plugin("cargo-hold-alert", "Brettgod1355/AFK-Shipwrecks", "AFK Shipwrecks",
                             {"role_id": "1", "closing_line": "Bye 🚢"})
 
 
-def test_release_body_skips_empty_sections_and_links_compare():
-    body = hub_release.render_release_body(NOTES, PLUGIN.repo, "v2.4", "v2.3")
-    assert "## 🆕 New Features" in body and "## 🐛 Bug Fixes" in body and "Improvements" not in body
-    assert body.endswith("https://github.com/Brettgod1355/AFK-Shipwrecks/compare/v2.3...v2.4")
-    first = hub_release.render_release_body({}, PLUGIN.repo, "v1.0", None)
+def test_release_body_matches_the_owners_releases():
+    body = hub_release.render_release_body(NOTES, PLUGIN.repo, "v2.4", "v2.3", "October 23, 2026")
+    assert body.startswith("On the Plugin Hub October 23, 2026.\n\n## 🐛 Bug Fixes\n- **Hold count:**")
+    assert body.index("## 🐛 Bug Fixes") < body.index("## ✨ New Features") and "Improvements" not in body
+    assert body.endswith("**Full Changelog**: https://github.com/Brettgod1355/AFK-Shipwrecks/compare/v2.3...v2.4")
+    first = hub_release.render_release_body({}, PLUGIN.repo, "v1.0", None, "May 1, 2026")
     assert "Maintenance release" in first and first.endswith("/commits/v1.0")
+    assert [h for _, h in hub_release.SECTIONS] == ["⚠️ Heads-up", "🎯 Accuracy", "🐛 Bug Fixes",
+        "⚙️ Settings and Defaults", "✨ New Features", "🔧 Improvements", "📚 Wiki and Media"]
+
+
+def test_hub_date_reads_the_entrys_last_change_and_falls_back_to_today():
+    from datetime import datetime
+    when = datetime(2026, 10, 19, 18, 53)
+    entry = SimpleNamespace(commit=SimpleNamespace(committer=SimpleNamespace(date=when)))
+    hub = SimpleNamespace(get_commits=lambda path: _Commits([entry]))
+    assert hub_release.hub_date(hub, "cargo-hold-alert") == "October 19, 2026"
+    assert hub_release.hub_date(None, "x").endswith(str(datetime.now().year))
+
+
+class _Commits(list):
+    @property
+    def totalCount(self):
+        return len(self)
 
 
 def test_discord_layout_and_split():
     [message] = hub_release.render_discord_messages(NOTES, PLUGIN, "2.4")
-    assert message.startswith("<@&1>\n\n# 📢 AFK Shipwrecks 2.4 is out!")
-    assert message.endswith("Bye 🚢")
-    long_notes = {"discord": {"new_features": ["x" * 900] * 2, "improvements": ["y" * 900] * 2, "bug_fixes": []}}
+    assert message == ("<@&1>\n\n# 📢 AFK Shipwrecks 2.4 is out!\n\n## 🤫 Hide crew text\nBusy spots get noisy.\n"
+                       "- Hidden at salvaging spots\n\n## 🧹 Everything else\n- Hold count fix\n\nBye 🚢")
+    long_notes = {"discord": [{"heading": "A", "bullets": ["x" * 900] * 2}, {"heading": "B", "bullets": ["y" * 900] * 2}]}
     messages = hub_release.render_discord_messages(long_notes, PLUGIN, "2.4")
     assert len(messages) > 1 and all(len(m) <= hub_release.DISCORD_LIMIT for m in messages)
     assert messages[0].startswith("<@&1>")
@@ -500,7 +522,7 @@ def watcher(monkeypatch):
             "repository": "https://github.com/Brettgod1355/AFK-Shipwrecks.git", "commit": pin})
         monkeypatch.setattr(hub_release, "collect_changes", lambda repo, base, head: f"changes {base}..{head}")
         calls = []
-        monkeypatch.setattr(hub_release, "write_notes", lambda p, v, c: calls.append(c) or NOTES)
+        monkeypatch.setattr(hub_release, "write_notes", lambda p, v, c, example="": calls.append(c) or NOTES)
         monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
         return repo, gh, calls
     return setup
@@ -549,7 +571,8 @@ def test_hub_entry_for_another_repository_is_skipped(watcher, monkeypatch):
 
 def test_plugins_json_loads():
     plugins = hub_release.load_plugins(Path(__file__).resolve().parents[1] / "plugins.json")
-    assert plugins[0].hub_name == "afk-shipwrecks" and plugins[0].repo == "Brettgod1355/AFK-Shipwrecks"
+    # The Hub entry kept its first name through the plugin's rename: plugins/cargo-hold-alert.
+    assert plugins[0].hub_name == "cargo-hold-alert" and plugins[0].repo == "Brettgod1355/AFK-Shipwrecks"
 
 
 # ---------- the real SDK against a fake HTTP endpoint ----------
