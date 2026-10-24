@@ -670,6 +670,19 @@ class _CountingClient:
             input_tokens=7 + len(messages[0]["content"])))
 
 
+def test_full_sha_resolves_short_ids_branches_and_head():
+    seen = []
+
+    def get_commit(ref):
+        seen.append(ref)
+        return SimpleNamespace(sha="7a5f3b705aace57b9fe76e74e476deb5894d3235")
+
+    gh = SimpleNamespace(get_repo=lambda name: SimpleNamespace(default_branch="main", get_commit=get_commit))
+    assert token_count.full_sha(gh, "Maiz19/reimagined-world-map", "7a5f3b7") == "7a5f3b705aace57b9fe76e74e476deb5894d3235"
+    token_count.full_sha(gh, "a/b", "HEAD")
+    assert seen == ["7a5f3b7", "main"]
+
+
 def test_claude_counter_removes_the_request_overhead():
     count = token_count.claude_counter(_CountingClient(), "m")
     assert count("abcd") == 4 and count("") == 0
