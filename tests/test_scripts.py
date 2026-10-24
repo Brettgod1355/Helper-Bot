@@ -492,6 +492,7 @@ class FakeRepo:
         self._releases = [SimpleNamespace(tag_name=t, draft=False) for t in releases]
         self.tags = tags  # tag -> commit
         self.created = []
+        self.calls = []
 
     def get_releases(self):
         return self._releases
@@ -509,9 +510,17 @@ class FakeRepo:
             raise GithubException(404, {}, None)
         return SimpleNamespace(decoded_content=text.encode())
 
-    def create_git_tag_and_release(self, *args, **kwargs):
-        self.created.append(args)
-        return SimpleNamespace(html_url="https://github.com/x/releases/v2.4")
+    def create_git_tag(self, tag, message, obj, typ, **kwargs):
+        self.calls.append(("tag", tag, obj, typ, kwargs.get("tagger")))
+        return SimpleNamespace(sha=f"tagobj-{tag}")
+
+    def create_git_ref(self, ref, sha):
+        self.calls.append(("ref", ref, sha))
+
+    def create_git_release(self, tag, name, body):
+        self.calls.append(("release", tag, name))
+        self.created.append((tag, name, body))
+        return SimpleNamespace(html_url=f"https://github.com/x/releases/{tag}")
 
 
 @pytest.fixture
@@ -545,9 +554,26 @@ def test_changed_live_run_tags_the_pin(watcher):
     repo, gh, calls = watcher("bbb", ["v2.3"], {"v2.3": "aaa"})
     hub_release.process(gh, None, PLUGIN, dry_run=False, manual=False)
     assert calls == ["changes aaa..bbb"]
-    tag, tag_message, name, body, obj, typ = repo.created[0]
-    assert (tag, name, obj, typ) == ("v2.4", "AFK Shipwrecks 2.4", "bbb", "commit")
-    assert "compare/v2.3...v2.4" in body
+    # An annotated tag object, then the ref that makes it the tag, then the release on it: never a plain tag.
+    assert [c[:4] if c[0] == "tag" else c for c in repo.calls] == [
+        ("tag", "v2.4", "bbb", "commit"), ("ref", "refs/tags/v2.4", "tagobj-v2.4"),
+        ("release", "v2.4", "AFK Shipwrecks 2.4")]
+    assert "compare/v2.3...v2.4" in repo.created[0][2]
+
+
+def test_live_run_tags_with_the_configured_tagger(watcher, monkeypatch):
+    monkeypatch.setenv("RELEASE_TAGGER_NAME", "BrettG")
+    monkeypatch.setenv("RELEASE_TAGGER_EMAIL", "1+x@users.noreply.github.com")
+    repo, gh, calls = watcher("bbb", ["v2.3"], {"v2.3": "aaa"})
+    hub_release.process(gh, None, PLUGIN, dry_run=False, manual=False)
+    tagger = repo.calls[0][4]
+    assert (tagger._identity["name"], tagger._identity["email"]) == ("BrettG", "1+x@users.noreply.github.com")
+
+
+def test_existing_tag_on_the_pin_gets_only_the_release(watcher):
+    repo, gh, calls = watcher("bbb", ["v2.3"], {"v2.3": "aaa", "v2.4": "bbb"})
+    hub_release.process(gh, None, PLUGIN, dry_run=False, manual=False)
+    assert repo.calls == [("release", "v2.4", "AFK Shipwrecks 2.4")]
 
 
 def test_manual_test_on_unchanged_pin_writes_notes_but_never_republishes(watcher):

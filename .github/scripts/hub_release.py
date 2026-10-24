@@ -71,8 +71,10 @@ the commits and diff do not support. Use setting and section names exactly as pl
 the game spells them (Defence, armour, Sailing).
 
 Release notes: every change goes in exactly one group, the first one in this list that fits; most groups stay \
-empty. A player-facing change is never dropped: one that fits no other group goes in improvements. Tests, tooling \
-and code tidying never appear. Each bullet starts with a short bold lead-in and a colon, then what it means for the \
+empty. Never describe the same change twice: when a change touches several things at once (a setting renamed and \
+given a new default, say), it is one bullet in the first group that fits, and that bullet mentions the rest. A \
+player-facing change is never dropped: one that fits no other group goes in improvements. Tests, tooling and code \
+tidying never appear. Each bullet starts with a short bold lead-in and a colon, then what it means for the \
 player, for example: "**A more accurate hold count:** a Deposit-all you click away from is counted right."
 1. heads_up: changes something the player already uses (a renamed or moved setting, a removed option, a different \
 look of something they had).
@@ -80,7 +82,8 @@ look of something they had).
 3. accuracy: the plugin's counts, timers and estimates closer to the game.
 4. bug_fixes: something was wrong and is not any more.
 5. performance: lighter on frames, less lag.
-6. settings: new settings, and defaults for new installs (say that existing players keep theirs).
+6. settings: new settings, and defaults for new installs (say that existing players keep theirs), unless a \
+heads_up bullet already covers the same setting.
 7. new_features: something new players can do or see.
 8. improvements: something that already existed and got better; the catch-all.
 9. experimental: off by default, to try.
@@ -341,19 +344,26 @@ def post_discord(webhook_url: str, messages: list[str], role_id: str | None, rel
 
 
 def create_release(repo, tag: str, title: str, body: str, commit: str, tag_exists: bool):
+    """Tag the commit with an annotated tag (when it has none yet) and publish the release on it.
+
+    The tag object alone is not a tag: GitHub needs refs/tags/<tag> pointing at it. PyGithub's
+    create_git_tag_and_release makes no such ref, so the release then made a plain tag on the commit and the tagger
+    was lost (v2.3.1, 2026-10-24). So: tag object, then its ref, then the release on the existing tag.
+    """
     from github import InputGitAuthor
 
-    if tag_exists:
-        return repo.create_git_release(tag, title, body)
-    name = os.environ.get("RELEASE_TAGGER_NAME", "").strip()
-    email = os.environ.get("RELEASE_TAGGER_EMAIL", "").strip()
-    tagger = (
-        InputGitAuthor(name, email, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-        if name and email
-        else None
-    )
-    kwargs = {"tagger": tagger} if tagger else {}
-    return repo.create_git_tag_and_release(tag, title, title, body, commit, "commit", **kwargs)
+    if not tag_exists:
+        name = os.environ.get("RELEASE_TAGGER_NAME", "").strip()
+        email = os.environ.get("RELEASE_TAGGER_EMAIL", "").strip()
+        tagger = (
+            InputGitAuthor(name, email, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+            if name and email
+            else None
+        )
+        kwargs = {"tagger": tagger} if tagger else {}
+        tag_object = repo.create_git_tag(tag, title, commit, "commit", **kwargs)
+        repo.create_git_ref(f"refs/tags/{tag}", tag_object.sha)
+    return repo.create_git_release(tag, title, body)
 
 
 def process(gh, hub, plugin: Plugin, *, dry_run: bool, manual: bool) -> None:
