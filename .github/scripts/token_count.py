@@ -1,15 +1,17 @@
 """Count a RuneLite plugin's tokens the way the Plugin Hub's review bot limits them.
 
-The review bot only reviews a plugin whose Java is under 200,000 tokens with comments stripped (maintainers on
-runelite/plugin-hub #15139: "Only java files in src/ with their comments stripped count"). Its code is not public.
-Calibrated on 2026-10-24 against seven counts the bot published (`.github/token-calibration.json`):
+The review bot only reviews a plugin whose Java is under 200,000 tokens with comments stripped (maintainers: "Only
+java files in src/ with their comments stripped count", runelite/plugin-hub#15139; "It reads only Java code that
+isn't in tests", Discord 2026-10-21). Its code is not public. Calibrated on 2026-10-24 against 35 counts the bot
+published for 24 plugins (`.github/token-calibration.json`):
 
 - Anthropic's count_tokens does not reproduce them: the bot's number is 0.51-0.60 of it (Claude Opus 4.7 and later)
   or 0.68-0.83 (Claude 4.6 and older), varying by plugin.
-- OpenAI's o200k_base tokenizer, over every .java under src/ except src/test/, comments stripped, comes closest:
-  the bot's number is 0.947-1.062 of it (two plugins within 0.2%). No method matched to the token.
+- OpenAI's o200k_base tokenizer over every .java that is not a test (not in a test folder, not named like a test),
+  comments stripped, comes closest: the bot's number is a median 0.976 of it, 0.925-1.037 for 8 points in 10.
+  No method matched to the token.
 
-So the count here is o200k_base (free, offline, no API), reported with the range the bot could give.
+So the count here is o200k_base (free, offline, no API), reported with a best guess and the range the bot gives.
 
     token_count.py count <dir>               print the report for a checked-out plugin
     token_count.py comment                   the /tokens comment command (issue_comment event; see README)
@@ -36,7 +38,10 @@ LIMIT = 200_000
 COMMENT_MARKER = "<!-- helper-bot:tokens -->"
 ENCODING = "o200k_base"
 # The Hub bot's published count divided by ours, lowest and highest over the calibration targets (2026-10-24).
-BOT_RATIO = (0.947, 1.062)
+# The Hub bot's published count divided by ours over 35 calibration points (2026-10-24): the median, and the
+# 10th to 90th percentile. The extremes (0.870 and 1.128) are on PRs pushed several times around the count.
+BOT_MEDIAN = 0.976
+BOT_RATIO = (0.925, 1.037)
 TARGET = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:@(?P<ref>[A-Za-z0-9_./-]+))?$")
 
 
@@ -102,18 +107,38 @@ class JavaFile:
     original: str = ""  # as committed
 
 
-def java_files(root: Path, under: str = "src") -> list[JavaFile]:
-    base = root / under
+def java_files(root: Path, under: str = "") -> list[JavaFile]:
+    """Every .java file under root/under (the whole checkout by default), .git left out."""
+    base = root / under if under else root
     files = []
     for path in sorted(base.rglob("*.java")) if base.is_dir() else []:
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith(".git/"):
+            continue
         original = path.read_text(encoding="utf-8", errors="replace")
-        files.append(JavaFile(path.relative_to(root).as_posix(), strip_java_comments(original), original))
+        files.append(JavaFile(rel, strip_java_comments(original), original))
     return files
 
 
+def is_test(path: str) -> bool:
+    """In a test folder, or named like a test (FooTest.java, FooTests.java, TestFoo.java).
+
+    The file name matters too: SlayerPlus moved its tests from src/test to verification/java and the bot's count
+    still left out the ...Test.java files there, but not the validators beside them (calibration, 2026-10-24).
+    """
+    *folders, name = path.split("/")
+    stem = name.removesuffix(".java")
+    return (any(part in ("test", "tests") for part in folders)
+            or stem.endswith(("Test", "Tests")) or (stem.startswith("Test") and stem[4:5].isupper()))
+
+
 def review_scope(files: list[JavaFile]) -> list[JavaFile]:
-    """What the bot appears to count: every .java under src/ except src/test/ (calibration, 2026-10-24)."""
-    return [f for f in files if not f.path.startswith("src/test/")]
+    """What the bot appears to count: every .java in the repository that is not in a test folder.
+
+    A maintainer: "It reads only Java code that isn't in tests" (Discord, 2026-10-21). Calibration agrees: a
+    plugin's src/simulation (gp-manager) and verification/java (SlayerPlus) count; src/test does not.
+    """
+    return [f for f in files if not is_test(f.path)]
 
 
 # ---------- counting ----------
@@ -152,7 +177,7 @@ def bot_range(total: int) -> tuple[int, int]:
 
 def render(report: Report, target: str) -> str:
     low, high = bot_range(report.total)
-    gap = LIMIT - report.total
+    guess = round(report.total * BOT_MEDIAN)
     if high < LIMIT:
         verdict = f"✅ under the 200,000 limit even at the top of that range ({LIMIT - high:,} to spare)"
     elif low >= LIMIT:
@@ -163,17 +188,18 @@ def render(report: Report, target: str) -> str:
         COMMENT_MARKER,
         f"### 🔢 Tokens: `{target}`",
         "",
-        f"**{report.total:,} tokens** ({gap:+,} from 200,000) in {report.file_count} `.java` files under `src/` "
-        f"(not `src/test/`), comments stripped.",
+        f"The Plugin Hub's review bot would most likely say **{guess:,}** ({LIMIT - guess:+,} from 200,000), "
+        f"and for 8 plugins in 10 it lands between **{low:,} and {high:,}**: {verdict}.",
         "",
-        f"The Plugin Hub's review bot would likely say **{low:,} to {high:,}**: {verdict}.",
+        f"Counted here: {report.total:,} tokens in {report.file_count} `.java` files that are not tests, comments "
+        "stripped.",
     ]
     if report.files:
         lines += ["", "| Largest files | Tokens |", "|---|---:|"]
         lines += [f"| `{path}` | {tokens:,} |" for path, tokens in report.files]
-    lines += ["", f"<sub>Counted with OpenAI's `{ENCODING}` tokenizer. The review bot's method is not public: on "
-                  f"seven counts it published, its number was {BOT_RATIO[0]:.3f} to {BOT_RATIO[1]:.3f} times this one "
-                  "(Helper-Bot calibration, 2026-10-24).</sub>"]
+    lines += ["", f"<sub>Counted with OpenAI's `{ENCODING}` tokenizer. The review bot's method is not public: on 35 "
+                  f"counts it published for 24 plugins, its number was a median {BOT_MEDIAN:.3f} times this one, "
+                  f"{BOT_RATIO[0]:.3f} to {BOT_RATIO[1]:.3f} for 8 in 10 (Helper-Bot calibration, 2026-10-24).</sub>"]
     return "\n".join(lines)
 
 
@@ -183,7 +209,10 @@ def fetch_commit(repo: str, ref: str, dest: Path, token: str = "") -> str:
     """A shallow checkout of repo@ref into dest; returns the commit SHA."""
     url = f"https://github.com/{repo}.git"
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
-    auth = ["-c", f"http.extraheader=AUTHORIZATION: basic {_basic(token)}"] if token else []
+    # core.longpaths: on Windows a deep package path is otherwise left out of the checkout without an error
+    # (20 files of PKoka5/bank-architect, 2026-10-24); Linux ignores it.
+    auth = ["-c", "core.longpaths=true"]
+    auth += ["-c", f"http.extraheader=AUTHORIZATION: basic {_basic(token)}"] if token else []
     dest.mkdir(parents=True, exist_ok=True)
 
     def run(*args: str) -> str:
@@ -283,11 +312,11 @@ def comment_main() -> None:
 # ---------- calibration ----------
 
 SCOPES = {
-    "src-minus-test": lambda files: "\n".join(f.text for f in review_scope(files)),
-    "src": lambda files: "\n".join(f.text for f in files),
+    "non-test (used)": lambda files: "\n".join(f.text for f in review_scope(files)),
+    "src incl. tests": lambda files: "\n".join(f.text for f in files if f.path.startswith("src/")),
     "main-only": lambda files: "\n".join(f.text for f in files if f.path.startswith("src/main/java/")),
-    "src-minus-test, comments kept": lambda files: "\n".join(f.original for f in review_scope(files)),
-    "src-minus-test, whitespace collapsed": lambda files: collapse_whitespace(
+    "non-test, comments kept": lambda files: "\n".join(f.original for f in review_scope(files)),
+    "non-test, whitespace collapsed": lambda files: collapse_whitespace(
         "\n".join(f.text for f in review_scope(files))),
 }
 

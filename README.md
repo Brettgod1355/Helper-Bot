@@ -230,22 +230,23 @@ above that it waits for a maintainer. Comment `/tokens` on an issue or PR to cou
 - `/tokens owner/repo` or `/tokens owner/repo@ref` (a branch, tag or commit) counts any public plugin.
 
 Only your own comments are answered (`owner`, default `Brettgod1355`); anyone else's `/tokens` starts no runner. The
-reply gives the count, the range the review bot would likely report, a verdict (under, over, or too close to call)
-and the ten largest files.
+reply gives the bot's most likely count, the range it lands in for 8 plugins in 10, a verdict (under, over, or too
+close to call), our own count and the ten largest files.
 
-**How it counts, and how sure it is.** The bot's code is not public. Its published counts
-(`.github/token-calibration.json`: runelite/plugin-hub #15816, #17120, #15139 and #17478) were compared with several
-methods on 2026-10-24:
+**How it counts, and how sure it is.** The bot's code is not public. Maintainers say only Java counts, comments
+stripped, and nothing in tests (JSON, READMEs and tests never count). Its published counts, 35 of them for 24
+plugins (`.github/token-calibration.json`: every runelite/plugin-hub PR where a maintainer posted "too many tokens"
+up to 2026-10-24), were compared with several methods:
 
 | Method | The bot's number ÷ this count |
 |---|---|
-| OpenAI `o200k_base`, every `.java` under `src/` except `src/test/`, comments stripped (**used**) | 0.947 to 1.062 |
-| OpenAI `cl100k_base`, same files | 0.96 to 1.07 |
-| Anthropic `count_tokens`, Claude Opus 4.7 and later | 0.51 to 0.60 |
-| Anthropic `count_tokens`, Claude 4.6 and older | 0.68 to 0.83 |
+| OpenAI `o200k_base`, every `.java` that is not a test (not in a `test`/`tests` folder, not named `*Test`, `*Tests` or `Test*`), comments stripped (**used**) | median 0.976; 0.925 to 1.037 for 8 in 10; 0.870 to 1.128 overall |
+| Anthropic `count_tokens`, Claude Opus 4.7 and later (first seven points) | 0.51 to 0.60 |
+| Anthropic `count_tokens`, Claude 4.6 and older (first seven points) | 0.68 to 0.83 |
 
-No method matched to the token, and the ratio is not steady, so the reply shows the bot's likely range (×0.947 to
-×1.062) rather than a single number. Counting all of `src/` (tests too) or keeping comments is further off.
+No method matched to the token and the ratio is not steady, so the reply gives a best guess (×0.976) and the range
+(×0.925 to ×1.037). Java outside `src/` counts (one plugin's `verification/java`), but test-named files there do
+not. Counting tests, or keeping comments, is further off.
 Counting needs no Claude and costs nothing.
 
 **Turning it on.** It starts in test mode: the reply goes to the run's log and summary, nothing is posted.

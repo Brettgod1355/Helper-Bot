@@ -631,13 +631,23 @@ def test_strip_java_comments_keeps_strings_and_line_count():
     assert "int x = 1;  int y = 2;" in out
 
 
-def test_java_files_are_under_src_and_sorted(tmp_path):
-    for rel in ("src/main/java/a/B.java", "src/test/java/a/BTest.java", "build/C.java", "src/main/resources/x.txt"):
+def test_java_files_cover_the_whole_checkout_but_git(tmp_path):
+    for rel in ("src/main/java/a/B.java", "src/test/java/a/BTest.java", "verification/java/V.java",
+                ".git/x/G.java", "src/main/resources/x.txt"):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("class X {} // c")
     files = token_count.java_files(tmp_path)
-    assert [f.path for f in files] == ["src/main/java/a/B.java", "src/test/java/a/BTest.java"]
+    assert [f.path for f in files] == ["src/main/java/a/B.java", "src/test/java/a/BTest.java", "verification/java/V.java"]
     assert files[0].text == "class X {} " and files[0].original == "class X {} // c"
+
+
+def test_is_test_by_folder_or_name():
+    tests = ["src/test/java/a/B.java", "x/tests/C.java", "verification/java/SlayerRegressionTest.java",
+             "src/main/java/FooTests.java", "src/main/java/TestHelper.java"]
+    not_tests = ["src/main/java/a/B.java", "verification/java/SlayerRouteReleaseValidator.java",
+                 "src/main/java/Testament.java", "src/main/java/Contest.java", "src/simulation/java/Sim.java"]
+    assert all(token_count.is_test(p) for p in tests)
+    assert not any(token_count.is_test(p) for p in not_tests)
 
 
 def test_parse_command_and_target():
@@ -699,15 +709,16 @@ def test_measure_ranks_files_and_review_scope_leaves_out_tests():
     assert report.files[0] == ("src/main/java/F12.java", 120)
 
 
-def test_render_gives_the_bots_likely_range_and_a_verdict():
-    assert token_count.bot_range(200_000) == (189_400, 212_400)
+def test_render_gives_a_best_guess_the_bots_range_and_a_verdict():
+    assert token_count.bot_range(200_000) == (185_000, 207_400)
     under = token_count.render(token_count.Report(150_000, [("src/main/java/A.java", 9000)], 3), "a/b@1234567")
-    assert under.startswith(token_count.COMMENT_MARKER) and "**150,000 tokens** (+50,000 from 200,000)" in under
-    assert "**142,050 to 159,300**: ✅ under" in under and "| `src/main/java/A.java` | 9,000 |" in under
+    assert under.startswith(token_count.COMMENT_MARKER) and "most likely say **146,400** (+53,600 from 200,000)" in under
+    assert "**138,750 and 155,550**: ✅ under" in under and "Counted here: 150,000 tokens in 3" in under
+    assert "| `src/main/java/A.java` | 9,000 |" in under
     close = token_count.render(token_count.Report(200_874, [], 95), "Maiz19/reimagined-world-map@7a5f3b7")
-    assert "(-874 from 200,000)" in close and "⚠️ too close to call" in close
+    assert "**196,053** (+3,947 from 200,000)" in close and "⚠️ too close to call" in close
     over = token_count.render(token_count.Report(219_000, [], 3), "a/b")
-    assert "❌ over" in over and "o200k_base" in over
+    assert "❌ over" in over and "o200k_base" in over and "35 counts" in over
 
 
 def test_comment_main_ignores_everyone_but_the_owner(tmp_path, monkeypatch, capsys):
