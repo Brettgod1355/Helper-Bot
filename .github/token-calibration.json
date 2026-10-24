@@ -1,0 +1,12 @@
+[
+  {"repo": "ZH-Systems/TangleDinkPlugin", "commit": "00a0548137d410ee6939253f8761a035bb3523db", "expected": 202899, "source": "runelite/plugin-hub#15816, Alexsuperfly 2026-09-01"},
+  {"repo": "ZH-Systems/TangleDinkPlugin", "commit": "4073e38d2cb17ea299b13231f7a27b269249afbb", "expected": 201786, "source": "runelite/plugin-hub#15816, coopermor 2026-09-09"},
+  {"repo": "Quentin242/hd-map-reforged", "commit": "bf64e27e5ecbc93736275dff1c8485632827bdcb", "expected": 214333, "source": "runelite/plugin-hub#17120, Alexsuperfly 2026-09-26"},
+  {"repo": "xRampageous/gp-manager", "commit": "e3e79231d572660e25682cfc78d5fdece921d9a8", "expected": 586887, "source": "runelite/plugin-hub#16574, Alexsuperfly 2026-09-15"},
+  {"repo": "Kbeeptest/card-locked", "commit": "448364964ac7b3dfb13670eb944af79c163bdce3", "expected": 314696, "source": "runelite/plugin-hub#15139, coopermor 2026-09-15"},
+  {"repo": "xRampageous/gp-manager", "commit": "0edcc3fd49962bebfbcf655c54bdeb48bfe41436", "expected": 206583, "source": "runelite/plugin-hub#17478, Alexsuperfly 2026-10-01 13:32"},
+  {"repo": "xRampageous/gp-manager", "commit": "d63e0d0299c60e6d37b7e76c9f1e5eb4c5c15eb2", "expected": 208869, "source": "runelite/plugin-hub#17478, Alexsuperfly 2026-10-01 15:35"},
+  {"repo": "xRampageous/gp-manager", "commit": "64908f72c5a91411eb8a81a22b3306442500ba19", "expected": 202333, "source": "runelite/plugin-hub#17478, ldavid432 2026-10-02 02:40"},
+  {"repo": "Maiz19/reimagined-world-map", "commit": "b8610177c68d06d695da30851143628c2c61d705", "expected": null, "source": "first real use (owner, 2026-10-24); no Hub number"},
+  {"repo": "Maiz19/reimagined-world-map", "commit": "7a5f3b705aace57b9fe76e74e476deb5894d3235", "expected": null, "source": "0.3.4, auto-merged by the Hub bot on runelite/plugin-hub#19112, so under 200k"}
+]

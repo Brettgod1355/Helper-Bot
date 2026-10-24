@@ -17,6 +17,7 @@ import common  # noqa: E402
 import hub_release  # noqa: E402
 import issue_triage  # noqa: E402
 import pr_audit  # noqa: E402
+import token_count  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -601,6 +602,108 @@ def test_plugins_json_loads():
     # The Hub entry kept its first name through the plugin's rename: plugins/cargo-hold-alert.
     assert plugins[0].hub_name == "cargo-hold-alert" and plugins[0].repo == "Brettgod1355/AFK-Shipwrecks"
 
+
+
+# ---------- token_count (the /tokens command) ----------
+
+JAVA = """package x; // a line comment
+/** Javadoc
+ * with lines */
+class A {
+    String s = "not // a comment /* either */";
+    char c = '/'; char q = '\'';
+    String t = \"\"\"
+        text /* kept */ // kept
+        \"\"\";
+    int x = 1; /* block */ int y = 2;
+    String e = "escaped \\" // still string";
+}
+"""
+
+
+def test_strip_java_comments_keeps_strings_and_line_count():
+    out = token_count.strip_java_comments(JAVA)
+    assert "a line comment" not in out and "Javadoc" not in out and "block" not in out
+    assert '"not // a comment /* either */"' in out
+    assert "text /* kept */ // kept" in out and "'/'" in out and "'\''" in out
+    assert '"escaped \\" // still string"' in out
+    assert out.count("\n") == JAVA.count("\n")
+    assert "int x = 1;  int y = 2;" in out
+
+
+def test_java_files_are_under_src_and_sorted(tmp_path):
+    for rel in ("src/main/java/a/B.java", "src/test/java/a/BTest.java", "build/C.java", "src/main/resources/x.txt"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("class X {} // c")
+    files = token_count.java_files(tmp_path)
+    assert [f.path for f in files] == ["src/main/java/a/B.java", "src/test/java/a/BTest.java"]
+    assert files[0].text == "class X {} " and files[0].original == "class X {} // c"
+
+
+def test_parse_command_and_target():
+    assert token_count.parse_command("/tokens") == (True, "")
+    assert token_count.parse_command("/tokens Maiz19/reimagined-world-map@b861017\nthanks") == (
+        True, "Maiz19/reimagined-world-map@b861017")
+    assert token_count.parse_command("please /tokens") == (False, "")
+    assert token_count.parse_command("/tokensx") == (False, "")
+    assert token_count.resolve_target("a/b@main", "me/here", None) == ("a/b", "main", "a/b@main")
+    assert token_count.resolve_target("a/b", "me/here", None) == ("a/b", "HEAD", "a/b")
+    with pytest.raises(ValueError):
+        token_count.resolve_target("a/b;rm -rf /", "me/here", None)
+
+
+def test_resolve_target_defaults_to_the_pr_head_or_the_default_branch(monkeypatch):
+    monkeypatch.setenv("ISSUE_NUMBER", "7")
+    head = SimpleNamespace(sha="abcdef1234", repo=SimpleNamespace(full_name="fork/p"))
+    pr_repo = SimpleNamespace(get_issue=lambda n: SimpleNamespace(number=n, pull_request=object()),
+                              get_pull=lambda n: SimpleNamespace(head=head))
+    assert token_count.resolve_target("", "me/p", pr_repo) == ("fork/p", "abcdef1234", "fork/p@abcdef1 (PR #7)")
+    issue_repo = SimpleNamespace(get_issue=lambda n: SimpleNamespace(number=n, pull_request=None), default_branch="main")
+    assert token_count.resolve_target("", "me/p", issue_repo) == ("me/p", "main", "me/p@main")
+
+
+class _CountingClient:
+    """count_tokens: 7 tokens of request overhead plus one per character."""
+
+    def __init__(self):
+        self.messages = SimpleNamespace(count_tokens=lambda model, messages: SimpleNamespace(
+            input_tokens=7 + len(messages[0]["content"])))
+
+
+def test_count_text_removes_the_request_overhead_and_measure_ranks_files():
+    client = _CountingClient()
+    assert token_count.count_text(client, "m", "abcd") == 4 and token_count.count_text(client, "m", "") == 0
+    files = [token_count.JavaFile(f"src/main/java/F{i}.java", "x" * (i * 10)) for i in range(1, 13)]
+    report = token_count.measure(client, "m", files)
+    assert report.total == sum(len(f.text) for f in files) + len(files) - 1  # joined with newlines
+    assert report.file_count == 12 and len(report.files) == 10
+    assert report.files[0] == ("src/main/java/F12.java", 120)
+
+
+def test_render_under_and_over():
+    under = token_count.render(token_count.Report(150_000, [("src/main/java/A.java", 9000)], 3), "a/b@1234567", "m")
+    assert under.startswith(token_count.COMMENT_MARKER) and "**150,000 tokens**" in under
+    assert "50,000 under" in under and "| `src/main/java/A.java` | 9,000 |" in under
+    over = token_count.render(token_count.Report(219_000, [], 3), "a/b", "m", "Calibrated: +0.1%.")
+    assert "19,000 over" in over and "Calibrated: +0.1%." in over
+
+
+def test_comment_main_ignores_everyone_but_the_owner(tmp_path, monkeypatch, capsys):
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"comment": {"body": "/tokens", "user": {"login": "someone"}}}))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("TOKENS_OWNER", "Brettgod1355")
+    token_count.comment_main()
+    assert "owner's only" in capsys.readouterr().out
+    event.write_text(json.dumps({"comment": {"body": "nice work", "user": {"login": "Brettgod1355"}}}))
+    token_count.comment_main()
+    assert "Not a /tokens comment" in capsys.readouterr().out
+
+
+def test_calibration_targets_are_well_formed():
+    targets = json.loads((Path(__file__).resolve().parents[1] / ".github" / "token-calibration.json").read_text())
+    assert all(token_count.TARGET.match(t["repo"]) and len(t["commit"]) == 40 for t in targets)
+    assert sum(1 for t in targets if t["expected"]) >= 7
 
 # ---------- the real SDK against a fake HTTP endpoint ----------
 

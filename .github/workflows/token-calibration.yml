@@ -1,0 +1,36 @@
+name: Token count calibration
+
+# Counts the commits in .github/token-calibration.json, whose token counts the Plugin Hub's review bot published,
+# with every variant and model, so the /tokens command can be checked against the bot. Free: count_tokens only.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, staging]
+    paths:
+      - .github/scripts/token_count.py
+      - .github/token-calibration.json
+      - .github/workflows/token-calibration.yml
+
+permissions:
+  contents: read
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # Claude by workload identity federation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Count and compare
+        env:
+          CALIBRATE_MODELS: all
+        run: python .github/scripts/token_count.py calibrate .github/token-calibration.json
