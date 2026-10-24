@@ -1,0 +1,21 @@
+# Copy to .github/workflows/tokens.yml in a plugin repository: the owner-only /tokens comment command.
+# Comment "/tokens" on an issue or PR (or "/tokens owner/repo@ref") to count the plugin's tokens against the
+# Plugin Hub review bot's 200,000 limit.
+name: Tokens
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  tokens:
+    # Only your own /tokens comments start a runner.
+    if: startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == 'Brettgod1355'
+    uses: Brettgod1355/Helper-Bot/.github/workflows/tokens.yml@main
+    with:
+      owner: Brettgod1355
+      dry_run: true   # false = reply on the issue or PR
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write

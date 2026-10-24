@@ -1,0 +1,55 @@
+name: Tokens
+
+# Reusable: the owner-only /tokens comment command. A repository calls this on issue_comment (see
+# examples/tokens.yml); Helper-Bot calls it from tokens-here.yml. Counts with tiktoken: free, no Claude.
+on:
+  workflow_call:
+    inputs:
+      owner:
+        description: The only GitHub login whose /tokens comments are answered
+        type: string
+        default: Brettgod1355
+      dry_run:
+        description: Print the reply to the run log instead of posting it
+        type: boolean
+        default: true
+      helper_bot_ref:
+        description: Branch, tag or SHA of Helper-Bot to run the script from
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  count:
+    name: Count tokens
+    # Checked again in the script; here so nobody else's comment starts a runner.
+    if: startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == inputs.owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check out Helper-Bot
+        uses: actions/checkout@v4
+        with:
+          repository: Brettgod1355/Helper-Bot
+          ref: ${{ inputs.helper_bot_ref }}
+          path: .helper-bot
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .helper-bot/requirements.txt
+      - run: pip install -r .helper-bot/requirements.txt
+      - name: Count and reply
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TOKENS_OWNER: ${{ inputs.owner }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python .helper-bot/.github/scripts/token_count.py comment

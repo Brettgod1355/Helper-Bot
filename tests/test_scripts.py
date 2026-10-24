@@ -670,22 +670,31 @@ class _CountingClient:
             input_tokens=7 + len(messages[0]["content"])))
 
 
-def test_count_text_removes_the_request_overhead_and_measure_ranks_files():
-    client = _CountingClient()
-    assert token_count.count_text(client, "m", "abcd") == 4 and token_count.count_text(client, "m", "") == 0
+def test_claude_counter_removes_the_request_overhead():
+    count = token_count.claude_counter(_CountingClient(), "m")
+    assert count("abcd") == 4 and count("") == 0
+
+
+def test_measure_ranks_files_and_review_scope_leaves_out_tests():
     files = [token_count.JavaFile(f"src/main/java/F{i}.java", "x" * (i * 10)) for i in range(1, 13)]
-    report = token_count.measure(client, "m", files)
-    assert report.total == sum(len(f.text) for f in files) + len(files) - 1  # joined with newlines
-    assert report.file_count == 12 and len(report.files) == 10
+    files += [token_count.JavaFile("src/test/java/T.java", "y" * 999), token_count.JavaFile("src/sim/java/S.java", "z")]
+    scoped = token_count.review_scope(files)
+    assert [f.path for f in scoped][-1] == "src/sim/java/S.java" and all("src/test/" not in f.path for f in scoped)
+    report = token_count.measure(len, scoped)
+    assert report.total == sum(len(f.text) for f in scoped) + len(scoped) - 1  # joined with newlines
+    assert report.file_count == 13 and len(report.files) == 10
     assert report.files[0] == ("src/main/java/F12.java", 120)
 
 
-def test_render_under_and_over():
-    under = token_count.render(token_count.Report(150_000, [("src/main/java/A.java", 9000)], 3), "a/b@1234567", "m")
-    assert under.startswith(token_count.COMMENT_MARKER) and "**150,000 tokens**" in under
-    assert "50,000 under" in under and "| `src/main/java/A.java` | 9,000 |" in under
-    over = token_count.render(token_count.Report(219_000, [], 3), "a/b", "m", "Calibrated: +0.1%.")
-    assert "19,000 over" in over and "Calibrated: +0.1%." in over
+def test_render_gives_the_bots_likely_range_and_a_verdict():
+    assert token_count.bot_range(200_000) == (189_400, 212_400)
+    under = token_count.render(token_count.Report(150_000, [("src/main/java/A.java", 9000)], 3), "a/b@1234567")
+    assert under.startswith(token_count.COMMENT_MARKER) and "**150,000 tokens** (+50,000 from 200,000)" in under
+    assert "**142,050 to 159,300**: ✅ under" in under and "| `src/main/java/A.java` | 9,000 |" in under
+    close = token_count.render(token_count.Report(200_874, [], 95), "Maiz19/reimagined-world-map@7a5f3b7")
+    assert "(-874 from 200,000)" in close and "⚠️ too close to call" in close
+    over = token_count.render(token_count.Report(219_000, [], 3), "a/b")
+    assert "❌ over" in over and "o200k_base" in over
 
 
 def test_comment_main_ignores_everyone_but_the_owner(tmp_path, monkeypatch, capsys):

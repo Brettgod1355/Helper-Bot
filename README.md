@@ -13,6 +13,8 @@ Everything starts in **dry run**: it prints what it would post and changes nothi
 | Hub release watcher | `.github/workflows/hub-release-watcher.yml` | twice an hour (minutes 17 and 47; GitHub may run it later), and by hand |
 | Self test | `.github/workflows/self-test.yml` | on every push and PR here (offline tests, no API calls) |
 | Auth check | `.github/workflows/auth-check.yml` | by hand, and when the sign-in code or `federation.json` changes: signs in to Claude by federation and lists models, free |
+| Tokens | `.github/workflows/tokens.yml` (reusable), `tokens-here.yml` | your `/tokens` comment: a plugin's token count against the Hub review bot's 200k limit, free |
+| Token count calibration | `.github/workflows/token-calibration.yml` | by hand, and when the counter or its targets change: checks the count against the bot's published numbers, free |
 
 ## Reaching Claude: workload identity federation (no API key)
 
@@ -218,6 +220,38 @@ only once the `HUB_WATCHER_LIVE` variable is `true`.
 
 GitHub pauses scheduled workflows in a public repository after 60 days without commits; re-enable it under
 Actions if that happens.
+
+## Tokens: `/tokens`
+
+The Plugin Hub's review bot only reviews a plugin whose Java is under **200,000 tokens** with comments stripped;
+above that it waits for a maintainer. Comment `/tokens` on an issue or PR to count a plugin before you submit:
+
+- `/tokens` counts the repository you comment in: the PR's head on a PR, the default branch on an issue.
+- `/tokens owner/repo` or `/tokens owner/repo@ref` (a branch, tag or commit) counts any public plugin.
+
+Only your own comments are answered (`owner`, default `Brettgod1355`); anyone else's `/tokens` starts no runner. The
+reply gives the count, the range the review bot would likely report, a verdict (under, over, or too close to call)
+and the ten largest files.
+
+**How it counts, and how sure it is.** The bot's code is not public. Its published counts
+(`.github/token-calibration.json`: runelite/plugin-hub #15816, #17120, #15139 and #17478) were compared with several
+methods on 2026-10-24:
+
+| Method | The bot's number ÷ this count |
+|---|---|
+| OpenAI `o200k_base`, every `.java` under `src/` except `src/test/`, comments stripped (**used**) | 0.947 to 1.062 |
+| OpenAI `cl100k_base`, same files | 0.96 to 1.07 |
+| Anthropic `count_tokens`, Claude Opus 4.7 and later | 0.51 to 0.60 |
+| Anthropic `count_tokens`, Claude 4.6 and older | 0.68 to 0.83 |
+
+No method matched to the token, and the ratio is not steady, so the reply shows the bot's likely range (×0.947 to
+×1.062) rather than a single number. Counting all of `src/` (tests too) or keeping comments is further off.
+Counting needs no Claude and costs nothing.
+
+**Turning it on.** It starts in test mode: the reply goes to the run's log and summary, nothing is posted.
+- Here in Helper-Bot: set the repository variable `TOKENS_LIVE` to `true` (`gh variable set TOKENS_LIVE --body
+  true -R Brettgod1355/Helper-Bot`). Then `/tokens owner/repo@ref` on any Helper-Bot issue replies there.
+- In a plugin repository: copy `examples/tokens.yml` to its `.github/workflows/`, then set `dry_run: false`.
 
 ## Cost
 

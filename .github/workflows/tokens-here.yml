@@ -1,0 +1,19 @@
+name: Tokens (here)
+
+# /tokens in Helper-Bot's own issues and PRs, e.g. "/tokens owner/plugin@ref" for any public plugin.
+# Test mode until the repository variable TOKENS_LIVE is "true": the reply goes to the run log only.
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  tokens:
+    if: startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == 'Brettgod1355'
+    uses: ./.github/workflows/tokens.yml
+    with:
+      owner: Brettgod1355
+      dry_run: ${{ vars.TOKENS_LIVE != 'true' }}
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
