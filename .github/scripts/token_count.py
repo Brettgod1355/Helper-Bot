@@ -229,6 +229,15 @@ def resolve_target(arg: str, here_repo: str, gh_repo) -> tuple[str, str, str]:
     return here_repo, gh_repo.default_branch, f"{here_repo}@{gh_repo.default_branch}"
 
 
+def full_sha(gh, repo: str, ref: str) -> str:
+    """The 40-character commit for a short SHA, branch, tag or HEAD: git fetches a commit only by its full SHA.
+
+    (`/tokens owner/repo@7a5f3b7` failed with "couldn't find remote ref 7a5f3b7", 2026-10-24.)
+    """
+    gh_repo = gh.get_repo(repo)
+    return gh_repo.get_commit(gh_repo.default_branch if ref == "HEAD" else ref).sha
+
+
 def count_target(repo: str, ref: str, label: str, token: str = "") -> str:
     with tempfile.TemporaryDirectory() as tmp:
         sha = fetch_commit(repo, ref, Path(tmp), token)
@@ -259,7 +268,7 @@ def comment_main() -> None:
     try:
         repo, ref, label = resolve_target(arg, here, gh_repo)
         token = os.environ["GITHUB_TOKEN"] if repo.lower() == here.lower() else ""
-        body = count_target(repo, ref, label, token)
+        body = count_target(repo, full_sha(gh, repo, ref), label, token)
     except Exception as exc:  # the reply says what went wrong instead of a silent red run
         detail = (getattr(exc, "stderr", "") or str(exc)).strip()[:300]
         body = f"{COMMENT_MARKER}\n🔢 `/tokens {arg}`: could not count ({type(exc).__name__}: {detail})."
