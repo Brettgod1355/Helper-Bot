@@ -2,7 +2,9 @@ name: Hub release watcher
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # Twice an hour, away from :00 and :30: GitHub delays or drops scheduled runs at busy minutes, and */30 ran only
+    # every 3 to 5 hours (2026-10-23). A late run loses nothing; the next one catches up.
+    - cron: "17,47 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:

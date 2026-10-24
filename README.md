@@ -10,7 +10,7 @@ Everything starts in **dry run**: it prints what it would post and changes nothi
 |---|---|---|
 | PR audit | `.github/workflows/pr-audit.yml` (reusable) | when a plugin repository calls it on a pull request |
 | Issue triage | `.github/workflows/issue-triage.yml` (reusable) | when a plugin repository calls it on a new issue |
-| Hub release watcher | `.github/workflows/hub-release-watcher.yml` | every 30 minutes, and by hand |
+| Hub release watcher | `.github/workflows/hub-release-watcher.yml` | twice an hour (minutes 17 and 47; GitHub may run it later), and by hand |
 | Self test | `.github/workflows/self-test.yml` | on every push and PR here (offline tests, no API calls) |
 | Auth check | `.github/workflows/auth-check.yml` | by hand, and when the sign-in code or `federation.json` changes: signs in to Claude by federation and lists models, free |
 
