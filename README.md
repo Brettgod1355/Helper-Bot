@@ -229,6 +229,8 @@ above that it waits for a maintainer. Comment `/tokens` on an issue or PR to cou
 
 - `/tokens` counts the repository you comment in: the PR's head on a PR, the default branch on an issue.
 - `/tokens owner/repo` or `/tokens owner/repo@ref` (a branch, tag or commit) counts any public plugin.
+- No issue needed: **Actions > Tokens > Run workflow** counts the branch you pick there (or an `owner/repo@ref` you
+  type), and the report goes to that run's summary. Only you can press it.
 
 Only your own comments are answered (`owner`, default `Brettgod1355`); anyone else's `/tokens` starts no runner. The
 reply gives the bot's most likely count, the range it lands in for 8 plugins in 10, a verdict (under, over, or too

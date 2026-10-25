@@ -1,18 +1,28 @@
 name: Tokens (here)
 
-# /tokens in Helper-Bot's own issues and PRs, e.g. "/tokens owner/plugin@ref" for any public plugin.
-# Test mode until the repository variable TOKENS_LIVE is "true": the reply goes to the run log only.
+# /tokens in Helper-Bot's own issues and PRs, e.g. "/tokens owner/plugin@ref" for any public plugin; or Actions >
+# Tokens (here) > Run workflow with that target, whose report goes to the run's summary.
+# Comments are in test mode until the repository variable TOKENS_LIVE is "true": the reply goes to the run log only.
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: owner/repo or owner/repo@ref to count (a public plugin)
+        type: string
+        required: true
 
 jobs:
   tokens:
-    if: startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == 'Brettgod1355'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == 'Brettgod1355')
     uses: ./.github/workflows/tokens.yml
     with:
       owner: Brettgod1355
       dry_run: ${{ vars.TOKENS_LIVE != 'true' }}
+      target: ${{ inputs.target || '' }}
     permissions:
       contents: read
       issues: write

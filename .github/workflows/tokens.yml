@@ -1,18 +1,23 @@
 name: Tokens
 
-# Reusable: the owner-only /tokens comment command. A repository calls this on issue_comment (see
-# examples/tokens.yml); Helper-Bot calls it from tokens-here.yml. Counts with tiktoken: free, no Claude.
+# Reusable: the owner-only /tokens command. A repository calls this on issue_comment, and on workflow_dispatch for a
+# Run workflow button in its Actions tab (see examples/tokens.yml); Helper-Bot calls it from tokens-here.yml.
+# Counts with tiktoken: free, no Claude.
 on:
   workflow_call:
     inputs:
       owner:
-        description: The only GitHub login whose /tokens comments are answered
+        description: The only GitHub login whose /tokens comments (or Run workflow presses) are answered
         type: string
         default: Brettgod1355
       dry_run:
-        description: Print the reply to the run log instead of posting it
+        description: Print the reply to the run log instead of posting it (comments only; a button press never posts)
         type: boolean
         default: true
+      target:
+        description: For Run workflow, owner/repo or owner/repo@ref to count (empty = this repository, the chosen branch)
+        type: string
+        default: ""
       helper_bot_ref:
         description: Branch, tag or SHA of Helper-Bot to run the script from
         type: string
@@ -24,8 +29,10 @@ permissions:
 jobs:
   count:
     name: Count tokens
-    # Checked again in the script; here so nobody else's comment starts a runner.
-    if: startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == inputs.owner
+    # Checked again in the script; here so nobody else's comment or press starts a runner.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.actor == inputs.owner) ||
+      (startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == inputs.owner)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -51,5 +58,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           TOKENS_OWNER: ${{ inputs.owner }}
+          TOKENS_TARGET: ${{ inputs.target }}
+          TOKENS_REF: ${{ github.ref_name }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: python .helper-bot/.github/scripts/token_count.py comment

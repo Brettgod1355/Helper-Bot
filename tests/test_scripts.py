@@ -739,6 +739,41 @@ def test_render_gives_a_best_guess_the_bots_range_and_a_verdict():
     assert "❌ over" in over and "o200k_base" in over and "35 counts" in over
 
 
+def test_button_counts_the_chosen_branch_or_the_typed_target(monkeypatch, capsys):
+    import github
+
+    monkeypatch.setattr(github, "Github", lambda auth: "gh")
+    monkeypatch.setattr(token_count, "full_sha", lambda gh, repo, ref: f"sha-of-{ref}")
+    seen = []
+    monkeypatch.setattr(token_count, "count_target", lambda repo, ref, label, token="": seen.append(
+        (repo, ref, label, bool(token))) or f"report for {label}")
+    for name, value in {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "Brettgod1355/Advanced-Map", "TOKENS_OWNER":
+                        "Brettgod1355", "TOKENS_REF": "staging", "GITHUB_ACTOR": "someone"}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("TOKENS_TARGET", raising=False)
+    token_count.button_main()
+    assert "owner's only" in capsys.readouterr().out and seen == []
+    monkeypatch.setenv("GITHUB_ACTOR", "Brettgod1355")
+    token_count.button_main()
+    assert seen[-1] == ("Brettgod1355/Advanced-Map", "sha-of-staging", "Brettgod1355/Advanced-Map@staging", True)
+    assert "report for Brettgod1355/Advanced-Map@staging" in capsys.readouterr().out
+    monkeypatch.setenv("TOKENS_TARGET", "Brettgod1355/AFK-Shipwrecks@2.4")
+    token_count.button_main()
+    assert seen[-1] == ("Brettgod1355/AFK-Shipwrecks", "sha-of-2.4", "Brettgod1355/AFK-Shipwrecks@2.4", False)
+
+
+def test_main_routes_a_button_press_and_a_comment(monkeypatch):
+    calls = []
+    monkeypatch.setattr(token_count, "button_main", lambda: calls.append("button"))
+    monkeypatch.setattr(token_count, "comment_main", lambda: calls.append("comment"))
+    monkeypatch.setattr(sys, "argv", ["token_count.py", "comment"])
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    token_count.main()
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "issue_comment")
+    token_count.main()
+    assert calls == ["button", "comment"]
+
+
 def test_comment_main_ignores_everyone_but_the_owner(tmp_path, monkeypatch, capsys):
     event = tmp_path / "event.json"
     event.write_text(json.dumps({"comment": {"body": "/tokens", "user": {"login": "someone"}}}))

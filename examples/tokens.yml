@@ -1,20 +1,30 @@
-# Copy to .github/workflows/tokens.yml in a plugin repository: the owner-only /tokens comment command.
-# Comment "/tokens" on an issue or PR (or "/tokens owner/repo@ref") to count the plugin's tokens against the
-# Plugin Hub review bot's 200,000 limit.
+# Copy to .github/workflows/tokens.yml in a plugin repository: the owner-only /tokens command.
+# Comment "/tokens" on an issue or PR (or "/tokens owner/repo@ref"), or press Actions > Tokens > Run workflow,
+# to count the plugin's tokens against the Plugin Hub review bot's 200,000 limit. A button press puts the report
+# in the run's summary.
 name: Tokens
 
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: owner/repo or owner/repo@ref to count (empty = this repository, the branch chosen above)
+        type: string
+        default: ""
 
 jobs:
   tokens:
-    # Only your own /tokens comments start a runner.
-    if: startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == 'Brettgod1355'
+    # Only your own /tokens comments or presses start a runner.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.actor == 'Brettgod1355') ||
+      (startsWith(github.event.comment.body, '/tokens') && github.event.comment.user.login == 'Brettgod1355')
     uses: Brettgod1355/Helper-Bot/.github/workflows/tokens.yml@main
     with:
       owner: Brettgod1355
-      dry_run: true   # false = reply on the issue or PR
+      dry_run: true   # false = reply on the issue or PR (a button press never posts)
+      target: ${{ inputs.target || '' }}
     permissions:
       contents: read
       issues: write

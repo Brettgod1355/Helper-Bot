@@ -358,9 +358,41 @@ def calibrate_main(path: str) -> None:
     common.write_step_summary("\n".join(rows))
 
 
+def button_main() -> None:
+    """A press of Run workflow in the Actions tab: the report goes to the run's summary, nothing is posted.
+
+    Counts TOKENS_TARGET (owner/repo[@ref]) when given, else this repository at the branch picked for the run.
+    """
+    from github import Auth, Github
+
+    owner = os.environ.get("TOKENS_OWNER", "").strip()
+    actor = os.environ.get("GITHUB_ACTOR", "")
+    if not owner or actor != owner:
+        print(f"Tokens is the owner's only ({owner or 'no owner set'}); {actor} started it. Nothing to do.")
+        return
+    gh = Github(auth=Auth.Token(os.environ["GITHUB_TOKEN"]))
+    here = os.environ["GITHUB_REPOSITORY"]
+    arg = os.environ.get("TOKENS_TARGET", "").strip()
+    try:
+        if arg:
+            repo, ref, label = resolve_target(arg, here, None)
+        else:
+            ref = os.environ.get("TOKENS_REF", "").strip() or "HEAD"
+            repo, label = here, f"{here}@{ref}"
+        token = os.environ["GITHUB_TOKEN"] if repo.lower() == here.lower() else ""
+        body = count_target(repo, full_sha(gh, repo, ref), label, token)
+    except Exception as exc:
+        detail = (getattr(exc, "stderr", "") or str(exc)).strip()[:300]
+        body = f"{COMMENT_MARKER}\n🔢 `{arg or here}`: could not count ({type(exc).__name__}: {detail})."
+    print(body)
+    common.write_step_summary(body)
+
+
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
-    if mode == "comment":
+    if mode == "comment" and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        button_main()
+    elif mode == "comment":
         comment_main()
     elif mode == "count" and len(sys.argv) > 2:
         print(render(measure(tiktoken_counter(), review_scope(java_files(Path(sys.argv[2])))), sys.argv[2]))
