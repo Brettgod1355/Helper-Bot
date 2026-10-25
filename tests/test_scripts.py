@@ -488,6 +488,24 @@ def test_discord_layout_and_split():
     assert messages[0].startswith("<@&1>")
 
 
+def test_discord_pings_the_roles_in_order_and_only_those(monkeypatch):
+    both = hub_release.Plugin("x", "a/b", "AFK Shipwrecks", {"role_ids": ["111", "222"], "closing_line": "Bye"})
+    assert hub_release.discord_roles(both) == ["111", "222"]
+    assert hub_release.render_discord_messages(NOTES, both, "2.4")[0].startswith("<@&111> <@&222>\n\n# 📢")
+    assert hub_release.discord_roles(PLUGIN) == ["1"]  # a single role_id still works
+    assert hub_release.discord_roles(hub_release.Plugin("x", "a/b", "X", {})) == []
+    posted = []
+    monkeypatch.setattr(hub_release.requests, "post", lambda url, params, json, timeout: posted.append(json) or
+                        SimpleNamespace(status_code=204, text=""))
+    hub_release.post_discord("https://hook", ["first", "second"], ["111", "222"], "https://rel", "T")
+    assert posted[0]["allowed_mentions"] == {"parse": [], "roles": ["111", "222"]}
+    assert posted[1]["allowed_mentions"] == {"parse": [], "roles": []} and "embeds" in posted[1]
+
+
+def test_plugins_json_pings_announcements_first():
+    plugins = hub_release.load_plugins(Path(__file__).resolve().parents[1] / "plugins.json")
+    assert hub_release.discord_roles(plugins[0]) == ["1550161665268518982", "1556025709875564674"]
+
 class FakeRepo:
     def __init__(self, releases, tags):
         self._releases = [SimpleNamespace(tag_name=t, draft=False) for t in releases]

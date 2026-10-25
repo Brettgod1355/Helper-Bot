@@ -297,11 +297,17 @@ def render_release_body(notes: dict, repo: str, tag: str, previous_tag: str | No
     return "\n\n".join(parts)
 
 
+def discord_roles(plugin: Plugin) -> list[str]:
+    """The roles to ping, in order: `role_ids` (the owner: the announcements role first), else the one `role_id`."""
+    roles = plugin.discord.get("role_ids") or ([plugin.discord["role_id"]] if plugin.discord.get("role_id") else [])
+    return [str(r).strip() for r in roles if str(r).strip()]
+
+
 def render_discord_messages(notes: dict, plugin: Plugin, version: str) -> list[str]:
     """The announcement in the owner's layout, split at section boundaries when it passes 2,000 characters."""
     blocks = []
-    role = plugin.discord.get("role_id")
-    header = (f"<@&{role}>\n\n" if role else "") + f"# 📢 {plugin.display_name} {version} is out!"
+    pings = " ".join(f"<@&{role}>" for role in discord_roles(plugin))
+    header = (f"{pings}\n\n" if pings else "") + f"# 📢 {plugin.display_name} {version} is out!"
     blocks.append(header)
     for section in notes.get("discord") or []:
         if not isinstance(section, dict):
@@ -330,11 +336,12 @@ def render_discord_messages(notes: dict, plugin: Plugin, version: str) -> list[s
     return messages
 
 
-def post_discord(webhook_url: str, messages: list[str], role_id: str | None, release_url: str, title: str) -> None:
+def post_discord(webhook_url: str, messages: list[str], roles: list[str], release_url: str, title: str) -> None:
     for index, content in enumerate(messages):
         payload: dict = {
             "content": content,
-            "allowed_mentions": {"parse": [], "roles": [role_id] if role_id and index == 0 else []},
+            # Only the listed roles, and only in the first message, may ping; nothing else in the text can.
+            "allowed_mentions": {"parse": [], "roles": roles if index == 0 else []},
         }
         if index == len(messages) - 1:
             payload["embeds"] = [{"title": title, "url": release_url, "color": 0x2B90D9}]
@@ -437,7 +444,7 @@ def process(gh, hub, plugin: Plugin, *, dry_run: bool, manual: bool) -> None:
     print(f"  Released {release.html_url}")
     webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
     if webhook:
-        post_discord(webhook, messages, plugin.discord.get("role_id"), release.html_url, f"{title} release notes")
+        post_discord(webhook, messages, discord_roles(plugin), release.html_url, f"{title} release notes")
         print("  Posted to Discord.")
     else:
         print("  DISCORD_WEBHOOK_URL is not set; no Discord post.")
