@@ -196,7 +196,8 @@ first name after a rename (AFK Shipwrecks is still `cargo-hold-alert`).
 Every run, for each plugin:
 
 1. Reads `https://raw.githubusercontent.com/runelite/plugin-hub/master/plugins/<hub_name>` (no Claude call) and
-   checks that its `repository=` is the plugin's repository.
+   checks that its `repository=` is the plugin's repository. No such file yet (a plugin listed before the Hub
+   accepts it): skipped quietly, so a plugin can be added here ahead of its launch.
 2. Compares its `commit=` with the commit of the plugin's latest GitHub release. Same commit: done.
 3. When the pin has moved, collects the commits and the diff since the latest release (or since the previous Hub
    pin when there is no release yet), adds the previous release's notes as an example of the voice to match, and

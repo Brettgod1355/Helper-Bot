@@ -150,8 +150,11 @@ def repo_from_url(url: str) -> str:
     return match.group(1) if match else ""
 
 
-def fetch_descriptor(hub_name: str) -> dict:
+def fetch_descriptor(hub_name: str) -> dict | None:
+    """The plugin's Hub entry, or None while the Hub has no plugins/<hub_name> file (not accepted yet)."""
     response = requests.get(RAW_URL.format(hub_name=hub_name), headers={"User-Agent": USER_AGENT}, timeout=30)
+    if response.status_code == 404:
+        return None
     response.raise_for_status()
     return parse_descriptor(response.text)
 
@@ -376,6 +379,9 @@ def create_release(repo, tag: str, title: str, body: str, commit: str, tag_exist
 def process(gh, hub, plugin: Plugin, *, dry_run: bool, manual: bool) -> None:
     print(f"\n== {plugin.display_name} ({plugin.hub_name} -> {plugin.repo})")
     descriptor = fetch_descriptor(plugin.hub_name)
+    if descriptor is None:
+        print(f"  Not on the Plugin Hub yet (no plugins/{plugin.hub_name}); skipping.")
+        return
     pin = descriptor.get("commit")
     if not pin:
         print("  The Hub entry has no commit= line; skipping.")

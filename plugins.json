@@ -22,5 +22,6 @@
       ],
       "closing_line": "Found a bug? Post it in <#1550413652551798854>. Have an idea? Drop it in <#1550413656452243466>. You can also use the Discord and GitHub buttons in the plugin's panel."
     }
-  }
+  },
+ {"hub_name":"advanced-map","repo":"Brettgod1355/Advanced-Map","display_name":"Advanced Map","discord":{"role_ids":["1550161665268518982","1565463285887803564"],"closing_line":"Found a bug? Post it in <#1550413652551798854>. Have an idea? Drop it in <#1550413656452243466>."}}
 ]

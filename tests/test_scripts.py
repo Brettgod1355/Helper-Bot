@@ -615,6 +615,18 @@ def test_hub_entry_for_another_repository_is_skipped(watcher, monkeypatch):
     assert calls == [] and repo.created == []
 
 
+def test_plugin_not_on_the_hub_yet_is_skipped_quietly(watcher, monkeypatch):
+    repo, gh, calls = watcher("bbb", [], {})
+    monkeypatch.setattr(hub_release, "fetch_descriptor", lambda name: None)
+    hub_release.process(gh, None, PLUGIN, dry_run=False, manual=True)
+    assert calls == [] and repo.calls == []
+
+
+def test_fetch_descriptor_treats_a_missing_hub_file_as_not_listed(monkeypatch):
+    monkeypatch.setattr(hub_release.requests, "get", lambda *a, **k: SimpleNamespace(status_code=404))
+    assert hub_release.fetch_descriptor("advanced-map") is None
+
+
 def test_plugins_json_loads():
     plugins = hub_release.load_plugins(Path(__file__).resolve().parents[1] / "plugins.json")
     # The Hub entry kept its first name through the plugin's rename: plugins/cargo-hold-alert.
