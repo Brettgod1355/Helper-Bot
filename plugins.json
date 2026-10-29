@@ -4,8 +4,23 @@
     "repo": "Brettgod1355/AFK-Shipwrecks",
     "display_name": "AFK Shipwrecks",
     "discord": {
-      "role_ids": ["1550161665268518982", "1556025709875564674"],
+      "role_ids": [
+        "1550161665268518982",
+        "1556025709875564674"
+      ],
       "closing_line": "No networking, no new dependencies. Found a bug? Post it in <#1550413652551798854>. Have an idea? Drop it in <#1550413656452243466>. You can also use the Feedback tab in the plugin. 🚢"
+    }
+  },
+  {
+    "hub_name": "sidebar-favorites",
+    "repo": "Brettgod1355/Sidebar-Favorites",
+    "display_name": "Sidebar Favorites",
+    "discord": {
+      "role_ids": [
+        "1550161665268518982",
+        "1556024552738263191"
+      ],
+      "closing_line": "Found a bug? Post it in <#1550413652551798854>. Have an idea? Drop it in <#1550413656452243466>. You can also use the Discord and GitHub buttons in the plugin's panel."
     }
   }
 ]
