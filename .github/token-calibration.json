@@ -37,5 +37,6 @@
   {"repo": "exisrick/TombsOfArbitrage-RuneLite", "commit": "23eac1dcbb4e15cd17b692363f64865ac6780396", "expected": 233503, "source": "runelite/plugin-hub#15150"},
   {"repo": "BraveH/Gachaman", "commit": "71dca666016eaa3e150dfb89e5b30ec0020d3fb5", "expected": 249632, "source": "runelite/plugin-hub#14903"},
   {"repo": "Maiz19/reimagined-world-map", "commit": "b8610177c68d06d695da30851143628c2c61d705", "expected": null, "source": "first real use (owner, 2026-10-24); no Hub number"},
-  {"repo": "Maiz19/reimagined-world-map", "commit": "7a5f3b705aace57b9fe76e74e476deb5894d3235", "expected": null, "source": "0.3.4, auto-merged by the Hub bot on runelite/plugin-hub#19112, so under 200k"}
+  {"repo": "Maiz19/reimagined-world-map", "commit": "7a5f3b705aace57b9fe76e74e476deb5894d3235", "expected": null, "source": "0.3.4, auto-merged by the Hub bot on runelite/plugin-hub#19112, so under 200k"},
+  {"repo": "AKAddons/runelite-loadout-lab", "commit": "6005c16b73fc6f3c6bce6dc0b08849bf033af261", "expected": 204000, "source": "runelite/plugin-hub#19799, the Hub bot's own comment \"204k\" (rounded to 1k), 2026-10-31; /tokens counted 202,169"}
 ]
