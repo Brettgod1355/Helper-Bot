@@ -502,9 +502,17 @@ def test_discord_pings_the_roles_in_order_and_only_those(monkeypatch):
     assert posted[1]["allowed_mentions"] == {"parse": [], "roles": []} and "embeds" in posted[1]
 
 
-def test_plugins_json_pings_announcements_first():
+ANNOUNCEMENTS_ROLE = "1550161665268518982"
+
+
+def test_plugins_json_pings_each_plugins_own_role_only():
+    """The announcements role is for new plugins, posted by hand; a release post pings only the plugin's own role."""
     plugins = hub_release.load_plugins(Path(__file__).resolve().parents[1] / "plugins.json")
-    assert hub_release.discord_roles(plugins[0]) == ["1550161665268518982", "1556025709875564674"]
+    assert hub_release.discord_roles(plugins[0]) == ["1556025709875564674"]
+    for plugin in plugins:
+        roles = hub_release.discord_roles(plugin)
+        assert ANNOUNCEMENTS_ROLE not in roles, plugin.hub_name
+        assert len(roles) <= 1, plugin.hub_name
 
 class FakeRepo:
     def __init__(self, releases, tags):

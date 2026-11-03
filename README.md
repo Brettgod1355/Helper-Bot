@@ -186,10 +186,11 @@ Without it, replies come from `github-actions[bot]`. With a GitHub App they come
 
 ```json
 [{"hub_name": "cargo-hold-alert", "repo": "Brettgod1355/AFK-Shipwrecks", "display_name": "AFK Shipwrecks",
-  "discord": {"role_ids": ["<announcements role>", "<the plugin's role>"], "closing_line": "<last line of the post>"}}]
+  "discord": {"role_ids": ["<the plugin's role>"], "closing_line": "<last line of the post>"}}]
 ```
 
-`discord` is optional. `role_ids` are pinged in that order at the top of the post (the announcements role first);
+`discord` is optional. `role_ids` are pinged in that order at the top of the post: only the plugin's own role (the
+server's announcements role is kept for new plugins, posted by hand);
 a single `role_id` still works. `hub_name` is the file name under `plugins/` in runelite/plugin-hub, which keeps a plugin's
 first name after a rename (AFK Shipwrecks is still `cargo-hold-alert`).
 
@@ -209,7 +210,7 @@ Every run, for each plugin:
    (each change in the first group that fits, 🔧 the catch-all), each bullet with a bold lead-in, then the
    **Full Changelog** compare link. A release made on a later day than the Hub merge starts with
    "On the Plugin Hub <date>.".
-5. Posts the announcement to Discord in the owner's layout: the role pings (announcements role first), `# 📢 <Plugin> <version> is out!`, a few
+5. Posts the announcement to Discord in the owner's layout: the plugin's role ping, `# 📢 <Plugin> <version> is out!`, a few
    themed `## <emoji> <topic>` sections with an optional intro line, "🧹 Everything else", the closing line, and a
    link to the release.
 

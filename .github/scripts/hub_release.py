@@ -301,7 +301,7 @@ def render_release_body(notes: dict, repo: str, tag: str, previous_tag: str | No
 
 
 def discord_roles(plugin: Plugin) -> list[str]:
-    """The roles to ping, in order: `role_ids` (the owner: the announcements role first), else the one `role_id`."""
+    """The roles to ping, in order: `role_ids`, else the one `role_id`. Each plugin pings its own role only."""
     roles = plugin.discord.get("role_ids") or ([plugin.discord["role_id"]] if plugin.discord.get("role_id") else [])
     return [str(r).strip() for r in roles if str(r).strip()]
 
