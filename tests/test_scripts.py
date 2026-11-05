@@ -54,7 +54,7 @@ def test_federation_settings_from_file_with_environment_overrides(monkeypatch, t
 
 def test_the_shipped_federation_file_has_every_field():
     shipped = Path(__file__).resolve().parents[1] / "federation.json"
-    assert set(json.loads(shipped.read_text())) == set(common.FEDERATION_FIELDS)
+    assert set(json.loads(shipped.read_text(encoding="utf-8"))) == set(common.FEDERATION_FIELDS)
 
 
 def test_auth_method_prefers_federation_and_needs_a_github_identity_token(monkeypatch, tmp_path):
@@ -314,13 +314,13 @@ def test_plugin_audit_report_goes_to_the_summary_and_is_never_posted(monkeypatch
     monkeypatch.setattr(pr_audit, "upsert_comment", no_post)
     monkeypatch.setattr(sys, "argv", ["pr_audit.py", "report"])
     pr_audit.main()
-    text = summary.read_text()
+    text = summary.read_text(encoding="utf-8")
     assert "## Plugin audit: `someone/plugin@abcdef1`" in text and pr_audit.COMMENT_MARKER not in text
     assert "No data warning." in text and "run by hand" in text
 
 
 def test_plugin_audit_workflow_is_owner_only_and_read_only():
-    text = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "audit-here.yml").read_text()
+    text = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "audit-here.yml").read_text(encoding="utf-8")
     assert "workflow_dispatch:" in text and "pull_request" not in text and "issue_comment" not in text
     gate = "github.actor == 'Brettgod1355' && github.triggering_actor == 'Brettgod1355'"
     assert text.count(gate) == 2  # both jobs
@@ -903,7 +903,7 @@ def test_comment_main_ignores_everyone_but_the_owner(tmp_path, monkeypatch, caps
 
 
 def test_calibration_targets_are_well_formed():
-    targets = json.loads((Path(__file__).resolve().parents[1] / ".github" / "token-calibration.json").read_text())
+    targets = json.loads((Path(__file__).resolve().parents[1] / ".github" / "token-calibration.json").read_text(encoding="utf-8"))
     assert all(token_count.TARGET.match(t["repo"]) and len(t["commit"]) == 40 for t in targets)
     assert sum(1 for t in targets if t["expected"]) >= 7
 
