@@ -9,7 +9,7 @@ Everything starts in **dry run**: it prints what it would post and changes nothi
 | What | File | Runs |
 |---|---|---|
 | PR audit | `.github/workflows/pr-audit.yml` (reusable) | when a plugin repository calls it on a pull request |
-| Plugin audit (here) | `.github/workflows/audit-here.yml` | by hand, owner only: the PR audit's two passes on any public plugin at one commit; the scorecard goes to the run summary |
+| Plugin audit (here) | `.github/workflows/audit-here.yml` | by hand, owner only: the PR audit's two passes on any public plugin at one commit; one scorecard in the run summary |
 | Issue triage | `.github/workflows/issue-triage.yml` (reusable) | when a plugin repository calls it on a new issue |
 | Hub release watcher | `.github/workflows/hub-release-watcher.yml` | twice an hour (minutes 17 and 47; GitHub may run it later), and by hand |
 | Self test | `.github/workflows/self-test.yml` | on every push and PR here (offline tests, no API calls) |
@@ -123,9 +123,17 @@ plus `pr_number` (to re-run on a PR by hand), `model` (default `claude-opus-5-5`
 (default `main`).
 
 - **Hub compliance:** sends the diff, `build.gradle`, `runelite-plugin.properties` and the full text of each
-  changed source file (so `startUp()` and `shutDown()` are seen together). It checks two things: everything
-  `startUp()` registers is unregistered in `shutDown()`, and there is no reflection, raw `HttpURLConnection` or
-  `client.*` call off the client thread.
+  changed source file (so `startUp()` and `shutDown()` are seen together). It checks that everything `startUp()`
+  registers is unregistered in `shutDown()`, and that there is no reflection, raw `HttpURLConnection` or `client.*`
+  call off the client thread.
+  - **Third-party warning:** only when the plugin itself contacts a server RuneLite does not run (the OSRS Wiki,
+    its price API, anything else). Then the Hub wants a `warning=` line in the plugin's Hub descriptor, or
+    `warning = "..."` on the `@ConfigItem` that turns it on; a description, a hidden setting or a switch in the
+    plugin's own panel does not count. A plugin that contacts no third party needs no warning, and the check reads
+    "n/a".
+  - A text scan of the whole `src/main` (not only the changed files) lists every URL and network call for it.
+  - The Hub descriptor comes from `plugins.json` (the Hub's master), or from a Hub PR number on the button. Without
+    one, a missing warning is a warning, not a failure.
 - **Deep stress test:** sends the whole `src/main/java` and the diff with extended thinking at high effort
   and asks for an adversarial audit: login, hop and `GameState` resets, scene-unload despawns, same-tick event
   order, per-frame allocations and leaks.
@@ -142,7 +150,10 @@ and their code should not decide what a paid API is asked.
 `commit=`, say; a branch, tag or short SHA works too). It runs the PR audit's two passes on the **whole** plugin at
 that commit: there is no pull request and no diff, so every file under `src/main` is judged as new code.
 
-- **Where the result goes:** the run's summary page, and nowhere else. Nothing is posted on any repository, the
+- **Hub PR (optional):** the runelite/plugin-hub PR number of the submission, so the compliance pass can see the
+  `warning=` line in its descriptor.
+- **Where the result goes:** the run's summary page, once (the Scorecard job; the two passes write only to their
+  logs), and nowhere else. Nothing is posted on any repository, the
   target's included. Helper-Bot is public, so the run page can be shared by its link.
 - **Who can run it:** only `Brettgod1355`. GitHub shows Run workflow to people with write access only, both jobs
   check that the owner started (and, on a re-run, re-ran) it, and the script checks again before fetching anything.

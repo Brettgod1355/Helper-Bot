@@ -2,7 +2,8 @@ name: Plugin audit (here)
 
 # Actions > Plugin audit (here) > Run workflow: the PR audit's two passes (Hub compliance, Deep stress test) on any
 # public plugin at one commit, e.g. a Plugin Hub submission's pinned `commit=`. The whole plugin is judged (there is
-# no PR and no diff) and the scorecard goes to this run's summary only: nothing is posted anywhere. The run page is
+# no PR and no diff) and the Scorecard job writes both passes to this run's summary, once (the passes write only to
+# their logs): nothing is posted anywhere. The run page is
 # public, so it is shareable by link; only the owner can start or re-run one (GitHub shows the button to writers
 # only, and both jobs check the actor). Spends Claude credit: two high-effort requests carrying the whole plugin.
 on:
@@ -12,6 +13,10 @@ on:
         description: owner/repo@commit of a public plugin (a branch, tag or short SHA works too)
         type: string
         required: true
+      hub_pr:
+        description: runelite/plugin-hub PR number of the submission (optional), so the compliance pass sees its warning= line
+        type: string
+        default: ""
       run_hub_compliance:
         description: Hub compliance pass
         type: boolean
@@ -31,6 +36,7 @@ run-name: Plugin audit of ${{ inputs.target }}
 
 env:
   AUDIT_TARGET: ${{ inputs.target }}
+  AUDIT_HUB_PR: ${{ inputs.hub_pr }}
   AUDIT_OWNER: Brettgod1355
   CLAUDE_MODEL: ${{ inputs.model }}
   OUT_DIR: audit-out

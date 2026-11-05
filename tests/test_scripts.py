@@ -324,8 +324,115 @@ def test_plugin_audit_workflow_is_owner_only_and_read_only():
     assert "workflow_dispatch:" in text and "pull_request" not in text and "issue_comment" not in text
     gate = "github.actor == 'Brettgod1355' && github.triggering_actor == 'Brettgod1355'"
     assert text.count(gate) == 2  # both jobs
+    assert "AUDIT_HUB_PR: ${{ inputs.hub_pr }}" in text  # the Hub PR number, like the target, only through env
     assert "permissions: {}" in text and ": write" not in text.replace("id-token: write", "")
     assert "${{ inputs.target }}" not in text.split("run-name:")[1].split("jobs:")[1]  # only through env, never in run:
+
+
+# ---------- third-party data warning (Hub compliance, check 3) ----------
+
+def test_compliance_asks_for_a_warning_only_when_a_third_party_is_contacted():
+    system = pr_audit.COMPLIANCE_SYSTEM
+    assert '"Third-party warning"' in system and "needs no warning" in system and '"n/a"' in system
+    assert "hidden = true" in system and "LinkBrowser" in system and "runelite.net" in system
+
+
+def _commit_wiki_fetch(root):
+    """A head commit whose only change is a test file, while an unchanged-in-this-commit source calls the wiki."""
+    (root / "src/main/java/t/PriceFeed.java").write_text(
+        'class PriceFeed { static final String URL = "https://prices.runescape.wiki/api/v1/osrs/latest";\n'
+        '  void get() { okHttpClient.newCall(request).enqueue(cb); } }\n')
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "wiki prices")
+    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+    (root / "src/test/java/t/TestPluginTest.java").write_text("class TestPluginTest { int x; }\n")
+    _git(root, "commit", "-q", "-am", "test only")
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+    return base, head
+
+
+def test_network_scan_covers_files_the_pr_does_not_change(plugin_repo):
+    root, _, _ = plugin_repo
+    base, head = _commit_wiki_fetch(root)
+    prompt = pr_audit.build_compliance_prompt(root, base, head)
+    network = prompt.split("<network>")[1].split("</network>")[0]
+    assert "src/main/java/t/PriceFeed.java:1:" in network and "prices.runescape.wiki" in network
+    assert "src/main/java/t/PriceFeed.java:2:" in network  # the newCall line
+    assert '<file path="src/main/java/t/PriceFeed.java">' not in prompt  # still not sent whole: unchanged
+    assert "TestPluginTest" not in network  # tests are not the plugin
+
+
+def test_network_scan_says_none_for_a_plugin_that_contacts_nobody(plugin_repo):
+    root, base, head = plugin_repo
+    prompt = pr_audit.build_compliance_prompt(root, base, head)
+    assert "(none: no URL or network call anywhere under src/main)" in prompt
+
+
+def test_compliance_prompt_shows_the_hub_descriptor_or_says_it_is_missing(plugin_repo):
+    root, base, head = plugin_repo
+    shown = pr_audit.build_compliance_prompt(root, base, head, ("runelite/plugin-hub: plugins/x", "warning=IP\n"))
+    assert '<file path="runelite/plugin-hub: plugins/x">' in shown and "warning=IP" in shown
+    missing = pr_audit.build_compliance_prompt(root, base, head)
+    assert "was not available, so it is not shown" in missing
+
+
+def test_hub_descriptor_from_plugins_json(monkeypatch, tmp_path):
+    plugins = tmp_path / "plugins.json"
+    plugins.write_text(json.dumps([{"hub_name": "cargo-hold-alert", "repo": "Brettgod1355/AFK-Shipwrecks"}]))
+    monkeypatch.setattr(pr_audit, "PLUGINS_FILE", plugins)
+    monkeypatch.delenv("AUDIT_HUB_PR", raising=False)
+    import requests
+
+    asked = []
+
+    def fake_get(url, timeout):
+        asked.append(url)
+        return SimpleNamespace(status_code=200, text="repository=x\ncommit=y\n", raise_for_status=lambda: None)
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    label, text = pr_audit.hub_descriptor("brettgod1355/afk-shipwrecks")  # case does not matter
+    assert label == "runelite/plugin-hub: plugins/cargo-hold-alert" and text.startswith("repository=")
+    assert asked == ["https://raw.githubusercontent.com/runelite/plugin-hub/master/plugins/cargo-hold-alert"]
+    assert pr_audit.hub_descriptor("someone/else") is None and len(asked) == 1  # not ours: nothing fetched
+    monkeypatch.setattr(requests, "get", lambda url, timeout: SimpleNamespace(status_code=404))
+    assert pr_audit.hub_descriptor("Brettgod1355/AFK-Shipwrecks") is None  # not on the Hub yet
+
+
+def test_hub_descriptor_refuses_a_hub_pr_that_is_not_a_number(monkeypatch):
+    monkeypatch.setenv("AUDIT_HUB_PR", "19731; rm -rf /")
+    assert pr_audit.hub_descriptor("2hBuilds/gp-per-xp") is None  # left out, and the audit still runs
+
+
+def test_pr_audit_looks_up_the_descriptor_for_its_own_repository(plugin_repo, monkeypatch):
+    root, base, head = plugin_repo
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setenv("BASE_SHA", base)
+    monkeypatch.setenv("HEAD_SHA", head)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Brettgod1355/AFK-Shipwrecks")
+    looked_up, seen = [], {}
+    monkeypatch.setattr(pr_audit, "hub_descriptor", lambda repo: looked_up.append(repo) or ("hub: plugins/x", "warning=w"))
+    monkeypatch.setattr(common, "ask_claude", lambda system, user, **k: seen.update(user=user) or
+                        '```json\n{"verdict": "pass", "summary": "ok", "checks": [], "findings": []}\n```')
+    assert pr_audit.run_audit("compliance")["status"] == "ok"
+    assert looked_up == ["Brettgod1355/AFK-Shipwrecks"] and "warning=w" in seen["user"]
+    looked_up.clear()
+    pr_audit.run_audit("stress")
+    assert looked_up == []  # only the compliance pass needs it
+
+
+def test_plugin_audit_passes_leave_the_summary_to_the_scorecard(monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setenv("OUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setattr(pr_audit, "run_audit", lambda mode: {"mode": mode, "status": "skipped", "reason": "r"})
+    monkeypatch.setattr(sys, "argv", ["pr_audit.py", "stress"])
+    monkeypatch.setenv("AUDIT_TARGET", "someone/plugin@abc1234")
+    pr_audit.main()
+    assert not summary.exists()  # the Scorecard job shows it once
+    monkeypatch.delenv("AUDIT_TARGET")
+    pr_audit.main()
+    assert "Deep stress test" in summary.read_text(encoding="utf-8")  # a PR audit's passes still write theirs
 
 
 # ---------- issue triage ----------
