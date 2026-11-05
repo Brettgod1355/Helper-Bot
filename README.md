@@ -9,6 +9,7 @@ Everything starts in **dry run**: it prints what it would post and changes nothi
 | What | File | Runs |
 |---|---|---|
 | PR audit | `.github/workflows/pr-audit.yml` (reusable) | when a plugin repository calls it on a pull request |
+| Plugin audit (here) | `.github/workflows/audit-here.yml` | by hand, owner only: the PR audit's two passes on any public plugin at one commit; the scorecard goes to the run summary |
 | Issue triage | `.github/workflows/issue-triage.yml` (reusable) | when a plugin repository calls it on a new issue |
 | Hub release watcher | `.github/workflows/hub-release-watcher.yml` | twice an hour (minutes 17 and 47; GitHub may run it later), and by hand |
 | Self test | `.github/workflows/self-test.yml` | on every push and PR here (offline tests, no API calls) |
@@ -134,6 +135,22 @@ plus `pr_number` (to re-run on a PR by hand), `model` (default `claude-opus-5-5`
 The audit reads `BOT_CONTEXT.md` and `CLAUDE.md` from the PR's **base** branch, so a PR cannot rewrite the
 reviewer's instructions. PRs from forks are skipped in the example caller: GitHub gives them no identity token,
 and their code should not decide what a paid API is asked.
+
+## Plugin audit (here): any public plugin at one commit
+
+**Actions > Plugin audit (here) > Run workflow**, with `owner/repo@commit` (a Plugin Hub submission's pinned
+`commit=`, say; a branch, tag or short SHA works too). It runs the PR audit's two passes on the **whole** plugin at
+that commit: there is no pull request and no diff, so every file under `src/main` is judged as new code.
+
+- **Where the result goes:** the run's summary page, and nowhere else. Nothing is posted on any repository, the
+  target's included. Helper-Bot is public, so the run page can be shared by its link.
+- **Who can run it:** only `Brettgod1355`. GitHub shows Run workflow to people with write access only, both jobs
+  check that the owner started (and, on a re-run, re-ran) it, and the script checks again before fetching anything.
+  A fork's copy cannot reach Claude: the federation rule needs a repository owned by `Brettgod1355`.
+- **The target is data:** its code is read, never built or run, and its own `BOT_CONTEXT.md` and `CLAUDE.md` are
+  another author's, so they are not read. The workflow has read-only permissions.
+- **Cost:** two high-effort requests that each carry the whole plugin (the stress test may also write up to 64k
+  tokens). Untick either pass to run just one.
 
 ## Issue triage
 

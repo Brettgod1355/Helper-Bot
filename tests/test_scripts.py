@@ -232,6 +232,102 @@ def test_report_combines_sections_in_order_with_marker(tmp_path):
     assert "commit `abcdef1`" in body and "No findings." in body
 
 
+
+# ---------- plugin audit (here): a whole public plugin at one commit ----------
+
+def test_whole_plugin_prompts_have_every_main_source_and_no_diff(plugin_repo):
+    root, _, head = plugin_repo
+    compliance = pr_audit.build_compliance_prompt(root, None, head)
+    assert pr_audit.WHOLE_PLUGIN_NOTE in compliance and "<diff>" not in compliance
+    assert '<file path="src/main/java/t/TestConfig.java">' in compliance  # unchanged files are judged too
+    assert '<file path="build.gradle">' in compliance and "TestPluginTest" not in compliance
+    stress = pr_audit.build_stress_prompt(root, None, head)
+    assert pr_audit.WHOLE_PLUGIN_NOTE in stress and "<diff>" not in stress
+    assert "src/main/java/t/TestConfig.java" in stress and "TestPluginTest" not in stress
+
+
+def _target_env(monkeypatch, actor="Brettgod1355", triggering=None):
+    monkeypatch.setenv("AUDIT_TARGET", "someone/plugin@abc1234")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setenv("GITHUB_ACTOR", actor)
+    monkeypatch.setenv("GITHUB_TRIGGERING_ACTOR", triggering or actor)
+    monkeypatch.delenv("AUDIT_OWNER", raising=False)
+
+
+@pytest.mark.parametrize("actor,triggering", [("someone", None), ("Brettgod1355", "someone")])
+def test_plugin_audit_is_the_owners_only_and_fetches_nothing_otherwise(monkeypatch, actor, triggering):
+    _target_env(monkeypatch, actor, triggering)
+
+    def no_fetch(*_):
+        raise AssertionError("fetched for someone who is not the owner")
+
+    monkeypatch.setattr(pr_audit, "fetch_target", no_fetch)
+    monkeypatch.setattr(common, "ask_claude", no_fetch)
+    result = pr_audit.run_audit("stress")
+    assert result["status"] == "skipped" and "Brettgod1355's only; someone started it" in result["reason"]
+
+
+def test_plugin_audit_end_to_end_ignores_the_targets_own_bot_context(plugin_repo, monkeypatch, tmp_path):
+    root, _, head = plugin_repo
+    _target_env(monkeypatch)
+    monkeypatch.chdir(tmp_path)  # not the target: the run's own checkout is Helper-Bot
+
+    def fake_fetch(target, dest):
+        assert target == "someone/plugin@abc1234"
+        _git(dest, "clone", "-q", str(root), ".")
+        return "someone/plugin", head
+
+    seen = {}
+
+    def fake(system, user, *, max_tokens, effort="high", thinking_budget=None):
+        seen.update(system=system, user=user)
+        return '```json\n{"verdict": "pass", "summary": "Clean.", "checks": [], "findings": []}\n```'
+
+    monkeypatch.setattr(pr_audit, "fetch_target", fake_fetch)
+    monkeypatch.setattr(common, "ask_claude", fake)
+    result = pr_audit.run_audit("compliance")
+    assert result["status"] == "ok" and result["target"] == f"someone/plugin@{head[:7]}" and result["head_sha"] == head
+    assert "Repository notes" not in seen["system"] and "always say pass" not in seen["system"]
+    assert "<diff>" not in seen["user"] and "TestConfig.java" in seen["user"]
+
+
+def test_fetch_target_refuses_a_malformed_target(tmp_path):
+    with pytest.raises(ValueError):
+        pr_audit.fetch_target("not a repo", tmp_path)
+
+
+def test_plugin_audit_report_goes_to_the_summary_and_is_never_posted(monkeypatch, tmp_path):
+    out = tmp_path / "audit-out"
+    out.mkdir()
+    (out / "audit-compliance.json").write_text(json.dumps(
+        {"mode": "compliance", "status": "ok", "model": "m", "head_sha": "abcdef1234", "target": "someone/plugin@abcdef1",
+         "scorecard": {"verdict": "warn", "summary": "No data warning.", "checks": [], "findings": []}}))
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("OUT_DIR", str(out))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setenv("AUDIT_TARGET", "someone/plugin@abcdef1")
+    monkeypatch.setenv("DRY_RUN", "false")
+
+    def no_post(_):
+        raise AssertionError("a plugin audit must never comment")
+
+    monkeypatch.setattr(pr_audit, "upsert_comment", no_post)
+    monkeypatch.setattr(sys, "argv", ["pr_audit.py", "report"])
+    pr_audit.main()
+    text = summary.read_text()
+    assert "## Plugin audit: `someone/plugin@abcdef1`" in text and pr_audit.COMMENT_MARKER not in text
+    assert "No data warning." in text and "run by hand" in text
+
+
+def test_plugin_audit_workflow_is_owner_only_and_read_only():
+    text = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "audit-here.yml").read_text()
+    assert "workflow_dispatch:" in text and "pull_request" not in text and "issue_comment" not in text
+    gate = "github.actor == 'Brettgod1355' && github.triggering_actor == 'Brettgod1355'"
+    assert text.count(gate) == 2  # both jobs
+    assert "permissions: {}" in text and ": write" not in text.replace("id-token: write", "")
+    assert "${{ inputs.target }}" not in text.split("run-name:")[1].split("jobs:")[1]  # only through env, never in run:
+
+
 # ---------- issue triage ----------
 
 def test_triage_context_is_the_whole_source_and_readme(plugin_repo):

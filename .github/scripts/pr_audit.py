@@ -5,13 +5,20 @@
     pr_audit.py report       combine the results into one scorecard; print it or post it on the PR
 
 Runs from the calling repository's checkout. Each audit writes `<OUT_DIR>/audit-<mode>.json`.
+
+With AUDIT_TARGET set (owner/repo@ref, e.g. a Plugin Hub submission's pinned commit) it audits that public
+plugin as a whole instead: no pull request and no diff, every file under src/main judged, and the scorecard goes
+to the run summary only, never to a comment. Only the owner (AUDIT_OWNER, default Brettgod1355) may start one;
+the target's own BOT_CONTEXT.md and CLAUDE.md are another author's and are not read.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -108,6 +115,37 @@ MODES = {
     "stress": "🔬 Deep stress test",
 }
 
+OWNER = "Brettgod1355"
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def audit_target() -> str:
+    """AUDIT_TARGET: owner/repo or owner/repo@ref of a public plugin to audit whole, or '' for a PR audit."""
+    return os.environ.get("AUDIT_TARGET", "").strip()
+
+
+def started_by_owner() -> bool:
+    """True when the owner both started this run and (on a re-run) pressed re-run: nobody else may spend on it."""
+    owner = os.environ.get("AUDIT_OWNER", "").strip() or OWNER
+    actor = os.environ.get("GITHUB_ACTOR", "")
+    return actor == owner and os.environ.get("GITHUB_TRIGGERING_ACTOR", actor) == owner
+
+
+def fetch_target(target: str, dest: Path) -> tuple[str, str]:
+    """A shallow checkout of the target into dest; returns (owner/repo, full commit SHA)."""
+    import token_count
+
+    match = token_count.TARGET.match(target)
+    if not match:
+        raise ValueError(f"`{target}` is not `owner/repo` or `owner/repo@ref`")
+    repo, ref = match["repo"], match["ref"] or "HEAD"
+    if not FULL_SHA.match(ref):  # git fetches a commit only by its full SHA; a branch, tag or short SHA is looked up
+        from github import Auth, Github
+
+        token = os.environ.get("GITHUB_TOKEN", "")
+        ref = token_count.full_sha(Github(auth=Auth.Token(token)) if token else Github(), repo, ref)
+    return repo, token_count.fetch_commit(repo, ref, dest)
+
 
 def resolve_shas(root: Path) -> tuple[str, str]:
     """Base and head of the PR, fetching the PR head when the run is a manual re-run by number."""
@@ -145,7 +183,19 @@ def first_existing(root: Path, ref: str, paths: list[str]) -> tuple[str, str] | 
     return None
 
 
-def build_compliance_prompt(root: Path, base: str, head: str) -> str:
+WHOLE_PLUGIN_NOTE = (
+    "This is not a pull request: it is a whole plugin at one commit (for example a Plugin Hub submission), so "
+    "there is no diff. Every file below is new; judge all of it as the pull request's code."
+)
+
+
+def java_sources_at(root: Path, head: str, under: str) -> list[str]:
+    names = common.git("ls-tree", "-r", "--name-only", head, "--", under, cwd=root).split()
+    return sorted(n for n in names if n.endswith(".java"))
+
+
+def build_compliance_prompt(root: Path, base: str | None, head: str) -> str:
+    """base None: the whole plugin at head, every src/main source and no diff."""
     blocks = []
     for found in (
         first_existing(root, head, ["build.gradle", "build.gradle.kts"]),
@@ -153,10 +203,16 @@ def build_compliance_prompt(root: Path, base: str, head: str) -> str:
     ):
         if found:
             blocks.append(common.file_block(*found))
-    for rel in changed_java_sources(root, base, head):
+    sources = java_sources_at(root, head, "src/main") if base is None else changed_java_sources(root, base, head)
+    for rel in sources:
         text = common.git_show(head, rel, cwd=root)
         if text is not None:
             blocks.append(common.file_block(rel, text))
+    if base is None:
+        return (
+            f"{WHOLE_PLUGIN_NOTE}\n\nFull text of the build files and of every source file under `src/main`:\n\n"
+            + "\n\n".join(blocks)
+        )
     diff = pr_diff(root, base, head)
     return (
         "Full text of the build files and of every source file this pull request changes, at its head:\n\n"
@@ -165,13 +221,18 @@ def build_compliance_prompt(root: Path, base: str, head: str) -> str:
     )
 
 
-def build_stress_prompt(root: Path, base: str, head: str) -> str:
-    names = common.git("ls-tree", "-r", "--name-only", head, "--", "src/main/java", cwd=root).split()
+def build_stress_prompt(root: Path, base: str | None, head: str) -> str:
+    """base None: the whole plugin at head and no diff."""
     blocks = []
-    for rel in sorted(n for n in names if n.endswith(".java")):
+    for rel in java_sources_at(root, head, "src/main/java"):
         text = common.git_show(head, rel, cwd=root)
         if text is not None:
             blocks.append(common.file_block(rel, text))
+    if base is None:
+        return (
+            f"{WHOLE_PLUGIN_NOTE}\n\nThe plugin's whole `src/main/java` ({len(blocks)} files):\n\n"
+            + "\n\n".join(blocks)
+        )
     diff = pr_diff(root, base, head)
     return (
         f"The plugin's whole `src/main/java` at the pull request's head ({len(blocks)} files):\n\n"
@@ -181,16 +242,34 @@ def build_stress_prompt(root: Path, base: str, head: str) -> str:
 
 
 def run_audit(mode: str) -> dict:
-    root = Path.cwd()
     result: dict = {"mode": mode, "model": common.model_name(), "status": "ok"}
+    target = audit_target()
+    if target:
+        result["target"] = target
+        if not started_by_owner():
+            result.update(status="skipped", reason=(
+                f"A plugin audit is {os.environ.get('AUDIT_OWNER', '').strip() or OWNER}'s only; "
+                f"{os.environ.get('GITHUB_TRIGGERING_ACTOR') or os.environ.get('GITHUB_ACTOR') or 'nobody'} started it."))
+            return result
     if not common.claude_available():
         result.update(status="skipped", reason=common.NO_CLAUDE)
         return result
 
-    base, head = resolve_shas(root)
+    if not target:
+        root = Path.cwd()
+        base, head = resolve_shas(root)
+        return ask(mode, result, root, base, head, common.load_repo_context(root, ref=base))
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, sha = fetch_target(target, Path(tmp))
+        result["target"] = f"{repo}@{sha[:7]}"
+        # Another author's repository: its BOT_CONTEXT.md and CLAUDE.md are not ours to follow, so none is read.
+        return ask(mode, result, Path(tmp), None, sha, "")
+
+
+def ask(mode: str, result: dict, root: Path, base: str | None, head: str, repo_context: str) -> dict:
+    """One audit of root at head (against base, or the whole plugin when base is None); fills in result."""
     result["head_sha"] = head
     system = COMPLIANCE_SYSTEM if mode == "compliance" else STRESS_SYSTEM
-    repo_context = common.load_repo_context(root, ref=base)
     if repo_context:
         system += "\n\n# Context from the repository's maintainer\n\n" + repo_context
 
@@ -271,7 +350,12 @@ def render_section(result: dict) -> str:
 def render_report(results: list[dict]) -> str:
     head = next((r.get("head_sha") for r in results if r.get("head_sha")), "")
     model = next((r.get("model") for r in results if r.get("model")), common.model_name())
-    parts = [COMMENT_MARKER, "## PR audit", ""]
+    target = next((r.get("target") for r in results if r.get("target")), "")
+    if target:
+        parts = [COMMENT_MARKER, f"## Plugin audit: `{_cell(target)}`", "",
+                 "The whole plugin at one commit, not a pull request: every file under `src/main` was judged.", ""]
+    else:
+        parts = [COMMENT_MARKER, "## PR audit", ""]
     if not results:
         parts.append("No audit ran.")
     for r in sorted(results, key=lambda r: list(MODES).index(r["mode"]) if r.get("mode") in MODES else 9):
@@ -279,7 +363,7 @@ def render_report(results: list[dict]) -> str:
     meta = f"Model `{model}`"
     if head:
         meta += f" · commit `{head[:7]}`"
-    parts.append(f"<sub>{meta} · updated on every run</sub>")
+    parts.append(f"<sub>{meta} · {'Helper-Bot, run by hand' if target else 'updated on every run'}</sub>")
     return "\n".join(parts)
 
 
@@ -329,6 +413,10 @@ def main() -> None:
 
     if mode == "report":
         body = render_report(load_results(out_dir))
+        if audit_target():  # another author's plugin: the run summary only, never a comment anywhere
+            print(body)
+            common.write_step_summary(body.replace(COMMENT_MARKER, "").strip())
+            return
         if dry_run:
             print("Dry run: this is the comment that would be posted.\n")
             print(body)

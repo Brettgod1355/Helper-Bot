@@ -1,0 +1,105 @@
+name: Plugin audit (here)
+
+# Actions > Plugin audit (here) > Run workflow: the PR audit's two passes (Hub compliance, Deep stress test) on any
+# public plugin at one commit, e.g. a Plugin Hub submission's pinned `commit=`. The whole plugin is judged (there is
+# no PR and no diff) and the scorecard goes to this run's summary only: nothing is posted anywhere. The run page is
+# public, so it is shareable by link; only the owner can start or re-run one (GitHub shows the button to writers
+# only, and both jobs check the actor). Spends Claude credit: two high-effort requests carrying the whole plugin.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: owner/repo@commit of a public plugin (a branch, tag or short SHA works too)
+        type: string
+        required: true
+      run_hub_compliance:
+        description: Hub compliance pass
+        type: boolean
+        default: true
+      run_deep_stress_test:
+        description: Deep stress test pass (extended thinking)
+        type: boolean
+        default: true
+      model:
+        description: Claude model
+        type: string
+        default: claude-opus-5-5
+
+permissions: {}
+
+run-name: Plugin audit of ${{ inputs.target }}
+
+env:
+  AUDIT_TARGET: ${{ inputs.target }}
+  AUDIT_OWNER: Brettgod1355
+  CLAUDE_MODEL: ${{ inputs.model }}
+  OUT_DIR: audit-out
+
+jobs:
+  audit:
+    name: ${{ matrix.title }}
+    if: github.actor == 'Brettgod1355' && github.triggering_actor == 'Brettgod1355'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # Claude by workload identity federation
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: compliance
+            title: Hub compliance
+          - mode: stress
+            title: Deep stress test
+    steps:
+      - name: Check out Helper-Bot
+        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test)
+        with:
+          python-version: "3.12"
+          cache: pip
+      - if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test)
+        run: pip install -r requirements.txt
+      - name: Audit
+        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MODE: ${{ matrix.mode }}
+        run: python .github/scripts/pr_audit.py "$MODE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plugin-audit-${{ matrix.mode }}
+          path: audit-out/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  report:
+    name: Scorecard
+    needs: audit
+    if: always() && github.actor == 'Brettgod1355' && github.triggering_actor == 'Brettgod1355'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out Helper-Bot
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-audit-*
+          path: audit-out
+      - name: Write the scorecard to the run summary
+        run: python .github/scripts/pr_audit.py report
