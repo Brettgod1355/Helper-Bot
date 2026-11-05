@@ -217,7 +217,8 @@ def fetch_commit(repo: str, ref: str, dest: Path, token: str = "") -> str:
 
     def run(*args: str) -> str:
         return subprocess.run(["git", *auth, *args], cwd=dest, check=True, env=env,
-                              capture_output=True, text=True).stdout.strip()
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace").stdout.strip()
 
     run("init", "-q")
     run("fetch", "-q", "--depth", "1", url, ref)

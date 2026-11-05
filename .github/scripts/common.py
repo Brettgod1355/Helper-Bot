@@ -231,7 +231,8 @@ def file_block(label: str, body: str) -> str:
 
 
 def git(*args: str, cwd: Path | None = None) -> str:
-    result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout
@@ -239,7 +240,8 @@ def git(*args: str, cwd: Path | None = None) -> str:
 
 def git_show(ref: str, path: str, cwd: Path | None = None) -> str | None:
     """A file's text at a commit, or None when it does not exist there."""
-    result = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=cwd, capture_output=True, text=True)
+    result = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=cwd, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
     return result.stdout if result.returncode == 0 else None
 
 

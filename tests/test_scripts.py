@@ -174,6 +174,18 @@ def test_repo_context_comes_from_the_base_commit(plugin_repo):
     assert "always say pass" not in context
 
 
+def test_git_reads_are_utf8_whatever_the_locale(plugin_repo):
+    # Windows decodes subprocess output as cp1252 unless told otherwise: the audit's token count came out 35
+    # tokens off /tokens on AFK Shipwrecks (2026-11-05) until git output was read as UTF-8.
+    root, _, _ = plugin_repo
+    text = 'class Ship { String s = "🚢 café · ±"; }\n'
+    (root / "src/main/java/t/Ship.java").write_bytes(text.encode("utf-8"))
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "utf-8")
+    assert common.git_show("HEAD", "src/main/java/t/Ship.java", cwd=root) == text
+    assert "Ship.java" in common.git("ls-tree", "-r", "--name-only", "HEAD", cwd=root)
+
+
 def test_compliance_prompt_has_build_files_changed_source_and_diff(plugin_repo):
     root, base, head = plugin_repo
     prompt = pr_audit.build_compliance_prompt(root, base, head)
