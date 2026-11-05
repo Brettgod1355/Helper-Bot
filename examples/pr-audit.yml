@@ -20,6 +20,7 @@ jobs:
     with:
       run_hub_compliance: true
       run_deep_stress_test: true
+      run_token_count: true  # free: no Claude
       dry_run: true   # false = post the scorecard as one PR comment, updated on every push
     permissions:
       contents: read

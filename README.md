@@ -118,7 +118,8 @@ From the PC, per repository:
 
 ## PR audit
 
-Inputs: `run_hub_compliance` (default true), `run_deep_stress_test` (default true), `dry_run` (default true),
+Inputs: `run_hub_compliance` (default true), `run_deep_stress_test` (default true), `run_token_count` (default
+true), `dry_run` (default true),
 plus `pr_number` (to re-run on a PR by hand), `model` (default `claude-opus-5-5`) and `helper_bot_ref`
 (default `main`).
 
@@ -137,6 +138,9 @@ plus `pr_number` (to re-run on a PR by hand), `model` (default `claude-opus-5-5`
 - **Deep stress test:** sends the whole `src/main/java` and the diff with extended thinking at high effort
   and asks for an adversarial audit: login, hop and `GameState` resets, scene-unload despawns, same-tick event
   order, per-frame allocations and leaks.
+- **Tokens:** the `/tokens` report for the PR's head (every committed `.java` that is not a test, counted with
+  tiktoken against the Plugin Hub's 200,000 limit). No Claude, so it costs no credit; in a private repository it
+  uses about half a minute of Actions time per push. The button counts its target the same way, always.
 - **Scorecard:** each audit prints its scorecard to the log and the run summary. With `dry_run: false`, one
   comment on the PR holds both, and it is edited in place on every push instead of adding new comments.
 

@@ -6,6 +6,7 @@ name: Plugin audit (here)
 # their logs): nothing is posted anywhere. The run page is
 # public, so it is shareable by link; only the owner can start or re-run one (GitHub shows the button to writers
 # only, and both jobs check the actor). Spends Claude credit: two high-effort requests carrying the whole plugin.
+# The token count beside them is free (tiktoken on the runner, no Claude).
 on:
   workflow_dispatch:
     inputs:
@@ -58,21 +59,23 @@ jobs:
             title: Hub compliance
           - mode: stress
             title: Deep stress test
+          - mode: tokens # free: no Claude, so always on
+            title: Tokens
     steps:
       - name: Check out Helper-Bot
-        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test)
+        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test) || matrix.mode == 'tokens'
         uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: actions/setup-python@v5
-        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test)
+        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test) || matrix.mode == 'tokens'
         with:
           python-version: "3.12"
           cache: pip
-      - if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test)
+      - if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test) || matrix.mode == 'tokens'
         run: pip install -r requirements.txt
       - name: Audit
-        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test)
+        if: (matrix.mode == 'compliance' && inputs.run_hub_compliance) || (matrix.mode == 'stress' && inputs.run_deep_stress_test) || matrix.mode == 'tokens'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MODE: ${{ matrix.mode }}

@@ -435,6 +435,85 @@ def test_plugin_audit_passes_leave_the_summary_to_the_scorecard(monkeypatch, tmp
     assert "Deep stress test" in summary.read_text(encoding="utf-8")  # a PR audit's passes still write theirs
 
 
+# ---------- token count in the audit (free: no Claude) ----------
+
+def _char_counter(monkeypatch):
+    import token_count
+
+    monkeypatch.setattr(token_count, "tiktoken_counter", lambda name=token_count.ENCODING: len)
+
+
+def _commit_counted_source(root):
+    """The fixture's Test*-named sources count as tests to the Hub's bot, so add one it counts; returns the head."""
+    (root / "src/main/java/t/Feed.java").write_text("class Feed { int price; }\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "feed")
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+
+
+def test_pr_audit_counts_tokens_without_claude(plugin_repo, monkeypatch):
+    root, base, _ = plugin_repo
+    head = _commit_counted_source(root)
+    _char_counter(monkeypatch)
+    monkeypatch.chdir(root)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)  # no credentials: the count still runs
+    monkeypatch.setenv("BASE_SHA", base)
+    monkeypatch.setenv("HEAD_SHA", head)
+    (root / ".helper-bot").mkdir()
+    (root / ".helper-bot" / "Stray.java").write_text("class Stray { " + "x" * 5000 + " }\n")  # not committed
+    monkeypatch.setattr(common, "ask_claude", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked Claude")))
+    result = pr_audit.run_audit("tokens")
+    assert result["status"] == "ok" and result["head_sha"] == head
+    section = pr_audit.render_section(result)
+    assert section.startswith(f"### 🔢 Tokens: `{head[:7]}`") and pr_audit.COMMENT_MARKER not in section
+    assert "in 1 `.java` files that are not tests" in section and "`src/main/java/t/Feed.java`" in section
+    assert "Stray" not in section and "TestPluginTest" not in section
+
+
+def test_plugin_audit_token_count_is_the_owners_only_too(monkeypatch):
+    _target_env(monkeypatch, "someone")
+    monkeypatch.setattr(pr_audit, "fetch_target", lambda *_: (_ for _ in ()).throw(AssertionError("fetched")))
+    result = pr_audit.run_audit("tokens")
+    assert result["status"] == "skipped" and "Brettgod1355's only" in result["reason"]
+
+
+def test_plugin_audit_counts_the_target_commit(plugin_repo, monkeypatch, tmp_path):
+    root, _, _ = plugin_repo
+    head = _commit_counted_source(root)
+    _target_env(monkeypatch)
+    _char_counter(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    def fake_fetch(target, dest):
+        _git(dest, "clone", "-q", str(root), ".")
+        return "someone/plugin", head
+
+    monkeypatch.setattr(pr_audit, "fetch_target", fake_fetch)
+    result = pr_audit.run_audit("tokens")
+    assert result["status"] == "ok" and result["target"] == f"someone/plugin@{head[:7]}" and result["tokens"] > 0
+
+
+def test_scorecard_puts_tokens_after_the_two_passes(tmp_path):
+    (tmp_path / "audit-tokens.json").write_text(json.dumps(
+        {"mode": "tokens", "status": "ok", "section": "### 🔢 Tokens: `abc1234`\n\nCounted here: 5 tokens"}))
+    (tmp_path / "audit-compliance.json").write_text(json.dumps(
+        {"mode": "compliance", "status": "ok", "model": "m",
+         "scorecard": {"verdict": "pass", "summary": "Clean.", "checks": [], "findings": []}}))
+    body = pr_audit.render_report(pr_audit.load_results(tmp_path))
+    assert body.index("Hub compliance") < body.index("🔢 Tokens") and "Counted here: 5 tokens" in body
+
+
+def test_token_count_jobs_never_reach_claude():
+    workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    pr_audit_yml = (workflows / "pr-audit.yml").read_text(encoding="utf-8")
+    job = pr_audit_yml.split("  token-count:")[1].split("\n  report:")[0]
+    assert "id-token" not in job and "ANTHROPIC_API_KEY" not in job and "pr_audit.py tokens" in job
+    assert "needs: [hub-compliance, deep-stress-test, token-count]" in pr_audit_yml
+    assert "inputs.run_token_count" in pr_audit_yml.split("\n  report:")[1].split("steps:")[0]
+    here = (workflows / "audit-here.yml").read_text(encoding="utf-8")
+    assert "- mode: tokens" in here and here.count("|| matrix.mode == 'tokens'") == 4
+
+
 # ---------- issue triage ----------
 
 def test_triage_context_is_the_whole_source_and_readme(plugin_repo):

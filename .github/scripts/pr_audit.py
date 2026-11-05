@@ -127,6 +127,7 @@ one. Code the pull request changes matters most, but a bug anywhere in the plugi
 MODES = {
     "compliance": "🧩 Hub compliance",
     "stress": "🔬 Deep stress test",
+    "tokens": "🔢 Tokens",  # no Claude: tiktoken on the runner, free
 }
 
 OWNER = "Brettgod1355"
@@ -339,20 +340,43 @@ def run_audit(mode: str) -> dict:
                 f"A plugin audit is {os.environ.get('AUDIT_OWNER', '').strip() or OWNER}'s only; "
                 f"{os.environ.get('GITHUB_TRIGGERING_ACTOR') or os.environ.get('GITHUB_ACTOR') or 'nobody'} started it."))
             return result
-    if not common.claude_available():
+    if mode != "tokens" and not common.claude_available():
         result.update(status="skipped", reason=common.NO_CLAUDE)
         return result
 
     if not target:
         root = Path.cwd()
         base, head = resolve_shas(root)
+        if mode == "tokens":
+            return count_tokens(result, root, head)
         return ask(mode, result, root, base, head, common.load_repo_context(root, ref=base),
                    os.environ.get("GITHUB_REPOSITORY", ""))
     with tempfile.TemporaryDirectory() as tmp:
         repo, sha = fetch_target(target, Path(tmp))
         result["target"] = f"{repo}@{sha[:7]}"
+        if mode == "tokens":
+            return count_tokens(result, Path(tmp), sha)
         # Another author's repository: its BOT_CONTEXT.md and CLAUDE.md are not ours to follow, so none is read.
         return ask(mode, result, Path(tmp), None, sha, "", repo)
+
+
+def count_tokens(result: dict, root: Path, head: str) -> dict:
+    """The /tokens report for the plugin at head: every committed .java that is not a test, as the Hub's bot counts.
+
+    Read from the commit, not the working tree, so the Helper-Bot checkout beside the plugin is never counted.
+    """
+    import token_count
+
+    names = common.git("ls-tree", "-r", "--name-only", head, cwd=root).splitlines()
+    files = []
+    for rel in sorted(n for n in names if n.endswith(".java")):
+        text = common.git_show(head, rel, cwd=root)
+        if text is not None:
+            files.append(token_count.JavaFile(rel, token_count.strip_java_comments(text), text))
+    report = token_count.measure(token_count.tiktoken_counter(), token_count.review_scope(files))
+    body = token_count.render(report, head[:7]).replace(token_count.COMMENT_MARKER, "").strip()
+    result.update(head_sha=head, section=body, tokens=report.total)
+    return result
 
 
 def ask(mode: str, result: dict, root: Path, base: str | None, head: str, repo_context: str,
@@ -404,6 +428,8 @@ def render_section(result: dict) -> str:
         return f"### {title}: skipped\n\n{result.get('reason', '')}"
     if status == "error":
         return f"### {title}: error\n\n{result.get('reason', '')}"
+    if result.get("section"):  # the token count renders itself
+        return result["section"]
     if status == "unparsed":
         return f"### {title}\n\nThe answer was not in the expected format; here it is as written:\n\n{result.get('raw', '')}"
 
