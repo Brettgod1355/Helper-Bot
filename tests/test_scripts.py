@@ -226,6 +226,97 @@ def test_run_audit_end_to_end_with_a_stubbed_claude(plugin_repo, monkeypatch):
     assert "startUp adds \\| shutDown" in section  # table-safe
 
 
+# ---------- the stress test of a PR judges what the PR brings ----------
+
+def _f(severity, new, title, **extra):
+    return {"severity": severity, "file": "src/main/java/t/TestPlugin.java", "line": 1, "title": title,
+            "detail": f"{title} detail", "fix": f"{title} fix", **({} if new is None else {"new": new}), **extra}
+
+
+SAMPLE_FINDINGS = [
+    _f("high", False, "Old leak"),  # on the base branch: must not fail the PR
+    _f("low", True, "New nit"),
+    _f("medium", True, "New hop reset"),
+    _f("medium", False, "Old ordering"),
+]
+
+
+def test_stress_prompt_asks_whether_each_finding_is_new():
+    system = pr_audit.STRESS_SYSTEM
+    assert '"new": true | false,' in system  # in the JSON the model returns
+    assert "`true` only when code the diff adds or changes introduces the bug" in system
+    assert "never makes a check or the verdict worse" in system and "every finding is `\"new\": true`" in system
+    assert '"new"' not in pr_audit.COMPLIANCE_SYSTEM  # the compliance pass is unchanged
+    assert "Code the pull request changes matters most" not in system
+
+
+def _stress_run(monkeypatch, root, base, head, card):
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setenv("BASE_SHA", base)
+    monkeypatch.setenv("HEAD_SHA", head)
+    monkeypatch.setattr(common, "ask_claude", lambda *a, **k: "```json\n" + json.dumps(card) + "\n```")
+    return pr_audit.run_audit("stress")
+
+
+def test_pr_stress_verdict_comes_from_new_findings_only(plugin_repo, monkeypatch):
+    root, base, head = plugin_repo
+    card = {"verdict": "fail", "summary": "s", "checks": [], "findings": SAMPLE_FINDINGS}
+    result = _stress_run(monkeypatch, root, base, head, card)
+    assert result["scoped"] is True
+    assert result["scorecard"]["verdict"] == "warn" and result["scorecard"]["model_verdict"] == "fail"
+
+    only_old = {"verdict": "warn", "findings": [_f("high", False, "Old leak"), _f("low", "false", "Old nit")]}
+    assert _stress_run(monkeypatch, root, base, head, only_old)["scorecard"]["verdict"] == "pass"
+    new_high = {"verdict": "warn", "findings": [_f("high", True, "New leak")]}
+    assert _stress_run(monkeypatch, root, base, head, new_high)["scorecard"]["verdict"] == "fail"
+    unmarked = {"verdict": "pass", "findings": [_f("low", None, "Unmarked")]}  # no `new`: counted as new
+    assert _stress_run(monkeypatch, root, base, head, unmarked)["scorecard"]["verdict"] == "warn"
+    nothing = {"verdict": "pass", "findings": []}
+    assert _stress_run(monkeypatch, root, base, head, nothing)["scorecard"]["verdict"] == "pass"
+
+
+def test_pr_stress_leads_with_new_findings_and_folds_lows_and_old_ones():
+    section = pr_audit.render_section({"mode": "stress", "status": "ok", "scoped": True, "scorecard": {
+        "verdict": "warn", "summary": "One new hop bug.", "checks": [], "findings": SAMPLE_FINDINGS}})
+    assert section.startswith("### 🔬 Deep stress test: ⚠️ warn")
+    lead, low, old = section.split("<details>")[0], section.split("<details>")[1], section.split("<details>")[2]
+    assert "**Findings in this pull request**" in lead and "New hop reset" in lead
+    assert "New nit" not in lead and "Old" not in lead
+    assert low.startswith("<summary>🟡 1 low finding in this pull request</summary>\n\n- 🟡 **low**")
+    assert "New nit" in low and "Old" not in low
+    assert old.startswith("<summary>Already on main: 2 findings this pull request did not bring")
+    assert old.index("Old leak") < old.index("Old ordering")  # still by severity
+    assert section.count("</details>") == 2 and section.rstrip().endswith("</details>")
+
+
+def test_pr_stress_with_nothing_new_says_so():
+    def section(findings):
+        return pr_audit.render_section({"mode": "stress", "status": "ok", "scoped": True,
+                                        "scorecard": {"verdict": "pass", "findings": findings}})
+
+    assert "No findings in this pull request." in section([]) and "<details>" not in section([])
+    only_old = section([_f("medium", False, "Old ordering")])
+    assert "No findings in this pull request." in only_old and "Already on main: 1 finding " in only_old
+    only_low = section([_f("low", True, "New nit")])
+    assert "No high or medium findings in this pull request." in only_low and "1 low finding" in only_low
+
+
+def test_whole_plugin_stress_keeps_every_finding_in_one_list(plugin_repo, monkeypatch, tmp_path):
+    root, _, head = plugin_repo
+    _target_env(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pr_audit, "fetch_target",
+                        lambda target, dest: (_git(dest, "clone", "-q", str(root), "."), ("someone/plugin", head))[1])
+    card = {"verdict": "fail", "summary": "s", "checks": [], "findings": SAMPLE_FINDINGS}
+    monkeypatch.setattr(common, "ask_claude", lambda *a, **k: "```json\n" + json.dumps(card) + "\n```")
+    result = pr_audit.run_audit("stress")
+    assert "scoped" not in result and result["scorecard"]["verdict"] == "fail"  # the model's verdict, as before
+    section = pr_audit.render_section(result)
+    assert "**Findings**" in section and "<details>" not in section and "Already on main" not in section
+    assert all(f["title"] in section for f in SAMPLE_FINDINGS)
+
+
 def test_run_audit_skips_without_credentials():
     result = pr_audit.run_audit("compliance")
     assert result["status"] == "skipped" and "no Claude credentials" in result["reason"]

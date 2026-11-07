@@ -138,6 +138,10 @@ plus `pr_number` (to re-run on a PR by hand), `model` (default `claude-opus-5-5`
 - **Deep stress test:** sends the whole `src/main/java` and the diff with extended thinking at high effort
   and asks for an adversarial audit: login, hop and `GameState` resets, scene-unload despawns, same-tick event
   order, per-frame allocations and leaks.
+  - On a PR, each finding says whether the diff brought it. Only those set the result: a new high fails, any
+    other new finding warns. Findings already on the base branch are still listed, folded under "Already on main",
+    and never make it warn, so a push does not bring back old nits. New low findings are folded too.
+  - The button's whole-plugin audit has no diff: every finding counts, in one list, as before.
 - **Tokens:** the `/tokens` report for the PR's head (every committed `.java` that is not a test, counted with
   tiktoken against the Plugin Hub's 200,000 limit). No Claude, so it costs no credit; in a private repository it
   uses about half a minute of Actions time per push. The button counts its target the same way, always.

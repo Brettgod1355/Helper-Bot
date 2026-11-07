@@ -1,7 +1,8 @@
 """PR audit for a RuneLite plugin repository.
 
     pr_audit.py compliance   Plugin Hub rejection causes in the PR (diff, build.gradle, properties)
-    pr_audit.py stress       adversarial OSRS engine audit of the whole src/main/java plus the diff
+    pr_audit.py stress       adversarial OSRS engine audit of the whole src/main/java plus the diff; only findings
+                             the diff brings set its result, those already on the base branch are listed folded
     pr_audit.py report       combine the results into one scorecard; print it or post it on the PR
 
 Runs from the calling repository's checkout. Each audit writes `<OUT_DIR>/audit-<mode>.json`.
@@ -118,11 +119,21 @@ keep references after despawn, logout or `shutDown()`.
 
 Use one check per numbered area (names: "GameState resets", "Scene unload", "Same-tick ordering", "Render cost and \
 leaks"). Prefer a few findings you are sure of over many guesses, and give the event sequence that triggers each \
-one. Code the pull request changes matters most, but a bug anywhere in the plugin counts.
+one. Read the whole plugin to trace each sequence, and report a bug wherever it is, but say whether the pull request \
+brought it:
+
+- Give every finding a field `"new": true | false`. `true` only when code the diff adds or changes introduces the \
+bug: the faulty line is a `+` line of the diff, or the diff changes what an unchanged line receives or when it runs \
+so that it now goes wrong. `false` when the same bug is already on the base branch: the code is untouched by the \
+diff, or the diff only moves, renames or reformats it. When unsure, `true`.
+- The verdict, each check's status and the summary judge only the findings with `"new": true`; a finding already on \
+the base branch is still reported, but never makes a check or the verdict worse.
+- When there is no diff (a whole plugin at one commit), every finding is `"new": true`.
 
 {UNTRUSTED_NOTE}
 
-{SCORECARD_FORMAT}"""
+{SCORECARD_FORMAT.replace('"severity": "high" | "medium" | "low",',
+                          '"severity": "high" | "medium" | "low",\n      "new": true | false,')}"""
 
 MODES = {
     "compliance": "🧩 Hub compliance",
@@ -407,7 +418,29 @@ def ask(mode: str, result: dict, root: Path, base: str | None, head: str, repo_c
         result.update(status="unparsed", raw=text)
     else:
         result["scorecard"] = scorecard
+        if mode == "stress" and base is not None:
+            scope_to_pr(result)
     return result
+
+
+def is_new(finding: dict) -> bool:
+    """A finding the PR's diff brought. A missing or unreadable `new` counts as new, so nothing is waved through."""
+    value = finding.get("new", True)
+    if isinstance(value, str):
+        return value.strip().lower() != "false"
+    return value is not False
+
+
+def scope_to_pr(result: dict) -> None:
+    """The stress test of a PR: only findings the diff brought set its verdict; those already on main never do.
+
+    Fail on a new high, warn on any other new finding, pass otherwise. The model's own verdict is kept beside it.
+    """
+    card = result["scorecard"]
+    new = [str(f.get("severity", "low")).lower() for f in card.get("findings") or [] if is_new(f)]
+    card["model_verdict"] = card.get("verdict")
+    card["verdict"] = "fail" if "high" in new else "warn" if new else "pass"
+    result["scoped"] = True
 
 
 # ---------- rendering ----------
@@ -445,23 +478,61 @@ def render_section(result: dict) -> str:
             st = str(check.get("status", "")).lower()
             lines.append(f"| {_cell(check.get('name'))} | {STATUS_ICON.get(st, '')} {st} | {_cell(check.get('detail'))} |")
         lines.append("")
-    findings = sorted(card.get("findings") or [], key=lambda f: SEVERITY_ORDER.get(str(f.get("severity")).lower(), 3))
-    if findings:
-        lines.append("**Findings**")
-        lines.append("")
-        for f in findings:
-            sev = str(f.get("severity", "low")).lower()
-            where = f.get("file") or ""
-            if where and f.get("line"):
-                where = f"{where}:{f['line']}"
-            loc = f" `{where}`" if where else ""
-            lines.append(f"- {SEVERITY_ICON.get(sev, '⚪')} **{sev}**{loc}: **{_cell(f.get('title'))}.** {_cell(f.get('detail'))}")
-            if f.get("fix"):
-                lines.append(f"  - *Fix:* {_cell(f['fix'])}")
-        lines.append("")
+    findings = sorted(card.get("findings") or [], key=lambda f: SEVERITY_ORDER.get(_severity(f), 3))
+    if result.get("scoped"):
+        lines += _scoped_findings(findings)
+    elif findings:
+        lines += ["**Findings**", ""] + [line for f in findings for line in _finding(f)] + [""]
     else:
         lines.append("No findings.")
     return "\n".join(lines).rstrip()
+
+
+def _severity(finding: dict) -> str:
+    return str(finding.get("severity", "low")).lower()
+
+
+def _finding(f: dict) -> list[str]:
+    sev = _severity(f)
+    where = f.get("file") or ""
+    if where and f.get("line"):
+        where = f"{where}:{f['line']}"
+    loc = f" `{where}`" if where else ""
+    lines = [f"- {SEVERITY_ICON.get(sev, '⚪')} **{sev}**{loc}: **{_cell(f.get('title'))}.** {_cell(f.get('detail'))}"]
+    if f.get("fix"):
+        lines.append(f"  - *Fix:* {_cell(f['fix'])}")
+    return lines
+
+
+def _folded(summary: str, findings: list[dict]) -> list[str]:
+    """A collapsed block; the blank line after <summary> lets GitHub render the list inside it as Markdown."""
+    return ([f"<details><summary>{summary}</summary>", ""] + [line for f in findings for line in _finding(f)]
+            + ["", "</details>", ""])
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _scoped_findings(findings: list[dict]) -> list[str]:
+    """A PR's stress findings: what the diff brought first, its lows folded, then what was already on main, folded."""
+    new = [f for f in findings if is_new(f)]
+    old = [f for f in findings if not is_new(f)]
+    lead = [f for f in new if _severity(f) != "low"]
+    low = [f for f in new if _severity(f) == "low"]
+    lines = []
+    if lead:
+        lines += ["**Findings in this pull request**", ""] + [line for f in lead for line in _finding(f)] + [""]
+    elif low:
+        lines += ["No high or medium findings in this pull request.", ""]
+    else:
+        lines += ["No findings in this pull request.", ""]
+    if low:
+        lines += _folded(f"{SEVERITY_ICON['low']} {_plural(len(low), 'low finding')} in this pull request", low)
+    if old:
+        lines += _folded(f"Already on main: {_plural(len(old), 'finding')} this pull request did not bring "
+                         "(not counted in the result)", old)
+    return lines
 
 
 def render_report(results: list[dict]) -> str:
