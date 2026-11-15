@@ -20,7 +20,9 @@ BUDGET_THINKING_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-fable-5", "claude-sonnet-5-5"}
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
-# Roughly 4 characters per token; keeps a request well inside a 1M-token context window.
+# Roughly 4 characters per token; keeps a request of code well inside a 1M-token context window. Tables of numbers
+# hold about twice as many tokens per character, so the model's own "prompt is too long" is reported the same way
+# (ask_claude).
 MAX_PROMPT_CHARS = 2_400_000
 
 # Directories that are never part of the plugin's own source.
@@ -176,8 +178,15 @@ def ask_claude(system: str, user: str, *, max_tokens: int, effort: str = "high",
                             thinking_budget=thinking_budget)
     client = anthropic.Anthropic(max_retries=4, **client_kwargs())
     messages = client.beta.messages if "betas" in params else client.messages
-    with messages.stream(**params) as stream:
-        message = stream.get_final_message()
+    try:
+        with messages.stream(**params) as stream:
+            message = stream.get_final_message()
+    except anthropic.BadRequestError as exc:
+        # the character count above is a rough guard; the model counts tokens
+        found = re.search(r"prompt is too long[^'\"}]*", str(exc))
+        if found:
+            raise TooLarge(found.group(0).strip()) from exc
+        raise
 
     usage = message.usage
     print(

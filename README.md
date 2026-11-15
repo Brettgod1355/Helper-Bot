@@ -135,13 +135,17 @@ plus `pr_number` (to re-run on a PR by hand), `model` (default `claude-opus-5-5`
   - A text scan of the whole `src/main` (not only the changed files) lists every URL and network call for it.
   - The Hub descriptor comes from `plugins.json` (the Hub's master), or from a Hub PR number on the button. Without
     one, a missing warning is a warning, not a failure.
-- **Deep stress test:** sends the whole `src/main/java` and the diff with extended thinking at high effort
+- **Deep stress test:** sends the whole `src/main/java` and the diff of `src/main` with extended thinking at high effort
   and asks for an adversarial audit: login, hop and `GameState` resets, scene-unload despawns, same-tick event
   order, per-frame allocations and leaks.
   - On a PR, each finding says whether the diff brought it. Only those set the result: a new high fails, any
     other new finding warns. Findings already on the base branch are still listed, folded under "Already on main",
     and never make it warn, so a push does not bring back old nits. New low findings are folded too.
   - The button's whole-plugin audit has no diff: every finding counts, in one list, as before.
+- **What a diff leaves out:** pictures and other binary files, and one file's patch over 40,000 characters unless
+  it is Java source (a generated table, like a drop table of 17,000 lines). The stress test's diff also leaves
+  out everything outside `src/main`. What is left out is named to Claude under the diff, so nothing is cut
+  silently. A request the model still calls too long is reported as skipped, with the model's token count.
 - **Tokens:** the `/tokens` report for the PR's head (every committed `.java` that is not a test, counted with
   tiktoken against the Plugin Hub's 200,000 limit). No Claude, so it costs no credit; in a private repository it
   uses about half a minute of Actions time per push. The button counts its target the same way, always.

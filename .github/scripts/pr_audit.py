@@ -1,7 +1,8 @@
 """PR audit for a RuneLite plugin repository.
 
     pr_audit.py compliance   Plugin Hub rejection causes in the PR (diff, build.gradle, properties)
-    pr_audit.py stress       adversarial OSRS engine audit of the whole src/main/java plus the diff; only findings
+                             (pictures and long generated tables are named, not sent: trimmed_diff)
+    pr_audit.py stress       adversarial OSRS engine audit of the whole src/main/java plus the diff of src/main; only findings
                              the diff brings set its result, those already on the base branch are listed folded
     pr_audit.py report       combine the results into one scorecard; print it or post it on the PR
 
@@ -262,6 +263,79 @@ def pr_diff(root: Path, base: str, head: str) -> str:
     return common.git("diff", "--find-renames", f"{base}...{head}", cwd=root)
 
 
+# One file's patch longer than this is left out of the diff a request carries, and named instead, unless it is Java
+# source: a generated table (a drop table of 17,000 lines) fills the request and tells a reviewer nothing. Advanced
+# Map 1.2 was 1,155,080 tokens with its tables and pictures, over the model's 1,000,000 (2026-11-15).
+MAX_FILE_PATCH_CHARS = 40_000
+
+_FILE_PATCH = re.compile(r"^diff --git ", re.MULTILINE)
+
+
+def _patch_header(patch: str) -> list[str]:
+    """The lines of one file's patch before its first hunk; all of it for a binary file or a pure rename."""
+    return patch.split("\n@@", 1)[0].split("\n")
+
+
+def _patch_path(patch: str) -> str:
+    """The file one file's patch is about: its path at the head, or its old one when the file was deleted."""
+    header = _patch_header(patch)
+    for prefix in ("+++ b/", "--- a/"):
+        for line in header[1:]:
+            if line.startswith(prefix):
+                return line[len(prefix):]
+    # no text patch (a binary file, a mode change, a pure rename): "diff --git a/<path> b/<path>"
+    names = header[0][len("diff --git "):]
+    middle = len(names) // 2
+    if names[middle:middle + 3] == " b/" and names[2:middle] == names[middle + 3:]:
+        return names[2:middle]
+    return names.rpartition(" b/")[2]
+
+
+def _folders(counts: dict[str, int]) -> str:
+    return ", ".join(f"`{folder}/` ({n} file{'' if n == 1 else 's'})" for folder, n in sorted(counts.items()))
+
+
+def trimmed_diff(root: Path, base: str, head: str, under: str | None = None) -> tuple[str, str]:
+    """The pull request's diff as a request carries it, and a note of what was left out of it ("" for nothing).
+
+    Left out and said so, never silently: binary files (pictures), a patch over MAX_FILE_PATCH_CHARS that is not
+    Java source (a generated table) and, with `under`, files outside that folder (the stress test reads `src/main`).
+    """
+    before, *patches = _FILE_PATCH.split(pr_diff(root, base, head))
+    kept = [before]
+    outside: dict[str, int] = {}
+    binary: dict[str, int] = {}
+    long: list[str] = []
+    for body in patches:
+        patch = "diff --git " + body
+        path = _patch_path(patch)
+        folder = path.rpartition("/")[0] or "."
+        if under and not path.startswith(under + "/"):
+            outside[folder] = outside.get(folder, 0) + 1
+        elif any(line.startswith(("Binary files ", "GIT binary patch")) for line in _patch_header(patch)):
+            binary[folder] = binary.get(folder, 0) + 1
+        elif len(patch) > MAX_FILE_PATCH_CHARS and not path.endswith(".java"):
+            lines = patch.split("\n")
+            added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
+            removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
+            long.append(f"`{path}` (+{added} -{removed} lines)")
+        else:
+            kept.append(patch)
+    left_out = []
+    if long:
+        left_out.append("- patches too long to send, none of them Java source: " + ", ".join(long))
+    if binary:
+        left_out.append("- binary files: " + _folders(binary))
+    if outside:
+        left_out.append(f"- files outside `{under}`: " + _folders(outside))
+    if not left_out:
+        return "".join(kept), ""
+    return "".join(kept), (
+        "Changed by the pull request as well, but left out of the diff above so that the request fits (this list "
+        "is Helper-Bot's, not the author's):\n" + "\n".join(left_out)
+    )
+
+
 def changed_java_sources(root: Path, base: str, head: str) -> list[str]:
     names = common.git(
         "diff", "--name-only", "--diff-filter=AMR", f"{base}...{head}", "--", "src/main", cwd=root
@@ -312,11 +386,12 @@ def build_compliance_prompt(root: Path, base: str | None, head: str,
             f"{WHOLE_PLUGIN_NOTE}\n\nFull text of the build files and of every source file under `src/main`:\n\n"
             + "\n\n".join(blocks) + tail
         )
-    diff = pr_diff(root, base, head)
+    diff, left_out = trimmed_diff(root, base, head)
     return (
         "Full text of the build files and of every source file this pull request changes, at its head:\n\n"
         + "\n\n".join(blocks)
         + f"\n\nThe pull request's diff against its base:\n\n<diff>\n{diff}\n</diff>"
+        + (f"\n\n{left_out}" if left_out else "")
         + tail
     )
 
@@ -333,11 +408,12 @@ def build_stress_prompt(root: Path, base: str | None, head: str) -> str:
             f"{WHOLE_PLUGIN_NOTE}\n\nThe plugin's whole `src/main/java` ({len(blocks)} files):\n\n"
             + "\n\n".join(blocks)
         )
-    diff = pr_diff(root, base, head)
+    diff, left_out = trimmed_diff(root, base, head, under="src/main")
     return (
         f"The plugin's whole `src/main/java` at the pull request's head ({len(blocks)} files):\n\n"
         + "\n\n".join(blocks)
-        + f"\n\nThe pull request's diff against its base:\n\n<diff>\n{diff}\n</diff>"
+        + f"\n\nThe pull request's diff against its base, for the files under `src/main`:\n\n<diff>\n{diff}\n</diff>"
+        + (f"\n\n{left_out}" if left_out else "")
     )
 
 

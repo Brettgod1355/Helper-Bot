@@ -203,6 +203,103 @@ def test_stress_prompt_has_all_main_sources_but_not_tests(plugin_repo):
     assert "TestPluginTest" not in prompt
 
 
+# ---------- what a request's diff leaves out, and says so ----------
+
+def _commit_tables_and_pictures(root):
+    """A second PR commit as Advanced Map 1.2 had: a long generated table, pictures, a long Java file, a test."""
+    table = "".join(f"Goblin\tC\tCoins x{n}\t1/128\n" for n in range(400))
+    (root / "src/main/resources/t").mkdir(parents=True)
+    (root / "src/main/resources/t/drops.tsv").write_text(table)
+    (root / "src/main/resources/t/small.tsv").write_text("Goblin\t2\n")
+    for name in ("a.png", "b.png"):
+        (root / "src/main/resources/t" / name).write_bytes(b"\x89PNG\x00\x01\x02" + name.encode())
+    (root / "src/main/java/t/Long.java").write_text(
+        "class Long {\n" + "".join(f"    int field{n};\n" for n in range(400)) + "}\n")
+    (root / "src/test/java/t/TestPluginTest.java").write_text("class TestPluginTest { void t() {} }\n")
+    (root / "README.md").write_text("# Test\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "tables and pictures")
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+
+
+def test_a_long_table_and_pictures_are_named_instead_of_sent(plugin_repo, monkeypatch):
+    # Advanced Map 1.2 (2026-11-15): 1,155,080 tokens, most of it a 17,000-line drop table, over the model's 1M
+    root, base, _ = plugin_repo
+    head = _commit_tables_and_pictures(root)
+    monkeypatch.setattr(pr_audit, "MAX_FILE_PATCH_CHARS", 2000)
+    diff, left_out = pr_audit.trimmed_diff(root, base, head)
+    assert "Coins x399" not in diff and "Binary files" not in diff
+    # Java source is what the audit is for: it stays however long; so do short data files, tests and the rest
+    assert "+    int field399;" in diff and "+Goblin\t2" in diff
+    assert "+class TestPluginTest { void t() {} }" in diff and "+# Test" in diff
+    assert "`src/main/resources/t/drops.tsv` (+400 -0 lines)" in left_out
+    assert "- binary files: `src/main/resources/t/` (2 files)" in left_out
+    assert "outside" not in left_out and "Long.java" not in left_out
+
+    compliance = pr_audit.build_compliance_prompt(root, base, head)
+    assert "Coins x399" not in compliance and "left out of the diff above" in compliance
+    assert compliance.index("</diff>") < compliance.index("drops.tsv` (+400 -0 lines)") < compliance.index("<network>")
+
+
+def test_the_stress_test_gets_the_diff_of_src_main_only(plugin_repo, monkeypatch):
+    root, base, _ = plugin_repo
+    head = _commit_tables_and_pictures(root)
+    monkeypatch.setattr(pr_audit, "MAX_FILE_PATCH_CHARS", 2000)
+    prompt = pr_audit.build_stress_prompt(root, base, head)
+    diff = prompt.split("<diff>")[1].split("</diff>")[0]
+    assert "+    int field399;" in diff and "+Goblin\t2" in diff and "overlayManager.add(o)" in diff
+    assert "TestPluginTest" not in prompt.replace("`src/test/java/t/`", "") and "+# Test" not in diff
+    assert "always say pass" not in diff  # .github/BOT_CONTEXT.md is outside src/main too
+    note = prompt.split("</diff>")[1]
+    assert "- files outside `src/main`: `./` (1 file), `.github/` (1 file), `src/test/java/t/` (1 file)" in note
+    assert "drops.tsv` (+400 -0 lines)" in note and "(2 files)" in note
+
+
+def test_a_diff_with_nothing_left_out_has_no_note(plugin_repo):
+    root, base, head = plugin_repo
+    diff, left_out = pr_audit.trimmed_diff(root, base, head)
+    assert left_out == "" and diff == pr_audit.pr_diff(root, base, head)
+    assert "left out of the diff" not in pr_audit.build_compliance_prompt(root, base, head)
+    # the stress test's diff leaves .github/BOT_CONTEXT.md out, and says so
+    assert "- files outside `src/main`: `.github/` (1 file)" in pr_audit.build_stress_prompt(root, base, head)
+
+
+def test_a_patch_names_its_file_whatever_kind_of_change_it_is():
+    path = pr_audit._patch_path
+    assert path("diff --git a/x/A.java b/x/A.java\nindex 1..2 100644\n--- a/x/A.java\n+++ b/x/A.java\n@@ -1 +1 @@\n-a\n+b\n") == "x/A.java"
+    assert path("diff --git a/x/new.tsv b/x/new.tsv\nnew file mode 100644\nindex 0..1\n--- /dev/null\n+++ b/x/new.tsv\n@@ -0,0 +1 @@\n+a\n") == "x/new.tsv"
+    assert path("diff --git a/x/gone.txt b/x/gone.txt\ndeleted file mode 100644\nindex 1..0\n--- a/x/gone.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n") == "x/gone.txt"
+    assert path("diff --git a/img/a b.png b/img/a b.png\nnew file mode 100644\nindex 0..1\nBinary files /dev/null and b/img/a b.png differ\n") == "img/a b.png"
+    assert path("diff --git a/old/A.java b/new/A.java\nsimilarity index 100%\nrename from old/A.java\nrename to new/A.java\n") == "new/A.java"
+    # a "+++ b/" line inside a hunk is content, not a name
+    assert path("diff --git a/n.txt b/n.txt\nindex 1..2\n--- a/n.txt\n+++ b/n.txt\n@@ -1 +1,2 @@\n a\n+++ b/other\n") == "n.txt"
+
+
+def test_the_models_own_too_long_is_reported_as_too_large(monkeypatch):
+    import anthropic
+    import httpx2
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    answer = {"type": "error", "error": {"type": "invalid_request_error",
+                                         "message": "prompt is too long: 1155080 tokens > 1000000 maximum"}}
+
+    def refuse(message):
+        def handler(request):
+            return httpx2.Response(400, json={**answer, "error": {**answer["error"], "message": message}})
+        real = anthropic.Anthropic
+        monkeypatch.setattr(anthropic, "Anthropic", lambda **kwargs: real(
+            **kwargs, http_client=httpx2.Client(transport=httpx2.MockTransport(handler))))
+
+    refuse(answer["error"]["message"])
+    with pytest.raises(common.TooLarge, match=r"^prompt is too long: 1155080 tokens > 1000000 maximum$"):
+        common.ask_claude("s", "u", max_tokens=10)
+    # any other bad request is still an error, not a skip
+    monkeypatch.undo()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    refuse("max_tokens: 10 is too small")
+    with pytest.raises(anthropic.BadRequestError):
+        common.ask_claude("s", "u", max_tokens=10)
+
+
 def test_run_audit_end_to_end_with_a_stubbed_claude(plugin_repo, monkeypatch):
     root, base, head = plugin_repo
     monkeypatch.chdir(root)
